@@ -1,6 +1,7 @@
 {
  "actions": [],
  "allow_rename": 1,
+ "autoname": "field:plan_code",
  "creation": "2026-09-29 15:07:33.024285",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -176,10 +177,11 @@
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-29 16:45:25.386706",
+ "modified": "2026-09-29 17:10:13.792087",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Plan",
+ "naming_rule": "By fieldname",
  "owner": "Administrator",
  "permissions": [
   {
