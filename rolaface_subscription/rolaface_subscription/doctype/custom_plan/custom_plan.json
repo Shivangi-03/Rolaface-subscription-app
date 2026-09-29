@@ -5,18 +5,178 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "section_break_qxkn"
+  "tab_basic",
+  "plan_name",
+  "plan_code",
+  "user_limit",
+  "column_break_yxmd",
+  "status",
+  "products",
+  "section_break_wviu",
+  "description",
+  "tab_pricing",
+  "billing_frequency",
+  "pricing_model",
+  "column_break_kpfv",
+  "currency",
+  "base_price",
+  "setup_fee",
+  "tab_trial",
+  "trial_enabled",
+  "trial_days",
+  "column_break_xyju",
+  "renewal_mode",
+  "billing_cycles"
  ],
  "fields": [
   {
-   "fieldname": "section_break_qxkn",
+   "fieldname": "tab_basic",
+   "fieldtype": "Tab Break",
+   "label": "Basic Information"
+  },
+  {
+   "bold": 1,
+   "fieldname": "plan_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Plan Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "plan_code",
+   "fieldtype": "Data",
+   "label": "Plan Code",
+   "set_only_once": 1,
+   "unique": 1
+  },
+  {
+   "description": "0 = unlimited",
+   "fieldname": "user_limit",
+   "fieldtype": "Int",
+   "label": "User Limit",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_yxmd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Publishing Status",
+   "options": "Draft\nActive",
+   "reqd": 1
+  },
+  {
+   "description": "Derived from modules",
+   "fieldname": "products",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Products",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_wviu",
    "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "description",
+   "fieldtype": "Small Text",
+   "label": "Description"
+  },
+  {
+   "fieldname": "tab_pricing",
+   "fieldtype": "Tab Break",
+   "label": "Pricing & Billing"
+  },
+  {
+   "default": "Monthly",
+   "fieldname": "billing_frequency",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Billing Frequency",
+   "options": "Monthly\nQuarterly\nHalf-Yearly\nYearly",
+   "reqd": 1
+  },
+  {
+   "default": "Flat",
+   "fieldname": "pricing_model",
+   "fieldtype": "Select",
+   "label": "Pricing Model",
+   "options": "Flat\nPer Module",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_kpfv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency",
+   "reqd": 1
+  },
+  {
+   "fieldname": "base_price",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Base Price",
+   "options": "currency"
+  },
+  {
+   "fieldname": "setup_fee",
+   "fieldtype": "Currency",
+   "label": "Setup / Onboarding Fee",
+   "non_negative": 1,
+   "options": "currency"
+  },
+  {
+   "fieldname": "tab_trial",
+   "fieldtype": "Tab Break",
+   "label": "Trial & Renewal"
+  },
+  {
+   "default": "0",
+   "fieldname": "trial_enabled",
+   "fieldtype": "Check",
+   "label": "Free Trial"
+  },
+  {
+   "depends_on": "eval:doc.trial_enabled",
+   "fieldname": "trial_days",
+   "fieldtype": "Int",
+   "label": "Trial Days",
+   "mandatory_depends_on": "eval:doc.trial_enabled",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "column_break_xyju",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Auto-renew",
+   "fieldname": "renewal_mode",
+   "fieldtype": "Select",
+   "label": "Billing Cycles",
+   "options": "Auto-renew\nFixed Cycles",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.renewal_mode=='Fixed Cycles'",
+   "fieldname": "billing_cycles",
+   "fieldtype": "Int",
+   "label": "Number of Cycles",
+   "mandatory_depends_on": "eval:doc.renewal_mode=='Fixed Cycles'",
+   "non_negative": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-09-29 15:07:33.024285",
+ "modified": "2026-09-29 16:45:25.386706",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Plan",
