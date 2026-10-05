@@ -1,0 +1,307 @@
+import hashlib
+import re
+from contextlib import contextmanager
+from datetime import date
+from decimal import Decimal
+
+import frappe
+from frappe.utils import add_months, cint, get_datetime, getdate
+
+# shared primitives from the plan module (same rules for numbers / strings everywhere)
+from rolaface_subscription.modules.plan.constant import MAX_NAME_LENGTH, RENEWAL_FIXED
+from rolaface_subscription.modules.plan.utils import (
+    _blank_to_none,
+    _choice,
+    _clean_str,
+    _opt_int,
+    _opt_str,
+    _to_bool,
+    _to_int,
+    _to_money,
+)
+from rolaface_subscription.modules.subscription.constant import (
+    ALL_STATUSES,
+    ALLOWED_SORT_FIELDS,
+    BILLING_CUSTOM,
+    DEFAULT_PAGE,
+    DEFAULT_PAGE_SIZE,
+    DEFAULT_SORT_BY,
+    DEFAULT_SORT_ORDER,
+    MAX_CUSTOM_MONTHS,
+    MAX_NOTES_LENGTH,
+    MAX_PAGE,
+    MAX_PAGE_SIZE,
+    MAX_REASON_LENGTH,
+    MAX_SHORT_TEXT,
+    MSG_NOT_FOUND,
+    MSG_STALE,
+    SORT_ORDERS,
+    STATUS_ACTIVE,
+    STATUS_CANCELLED,
+    STATUS_EXPIRED,
+    STATUS_SCHEDULED,
+    STATUS_TRIALING,
+    SUBSCRIPTION_DOCTYPE,
+    SUBSCRIPTION_FREQUENCIES,
+)
+from rolaface_subscription.utils.api_response import ConflictError
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CENT = Decimal("0.01")
+
+
+# ------------------------------------------------------------------ small helpers
+def _to_date(value, field) -> date:
+    if not isinstance(value, str) or not _DATE_RE.match(value.strip()):
+        frappe.throw(f"{field} must be a date in YYYY-MM-DD format")
+    try:
+        return date.fromisoformat(value.strip())
+    except ValueError:
+        frappe.throw(f"{field} is not a valid date")
+
+
+def money(value) -> Decimal:
+    """DB / float value -> Decimal with exactly 2 decimals"""
+    return Decimal(str(value or 0)).quantize(CENT)
+
+
+def period_bounds(anchor: date, months: int, cycle_no: int):
+    """Period n runs from anchor+(n-1)*months to anchor+n*months.
+    Always measured from the SAME anchor (not from the previous end), so month-end dates
+    do not drift: anchor Jan 31 gives Feb 28, Mar 31, Apr 30 ... (not Feb 28, Mar 28, ...)."""
+    return add_months(anchor, (cycle_no - 1) * months), add_months(anchor, cycle_no * months)
+
+
+# ------------------------------------------------------------------ status (derived from dates)
+def _d(value):
+    return getdate(value) if value else None
+
+
+def derive_status(row, today: date) -> str:
+    """Works on a DB row or a document (attribute access).
+    The SQL conditions below mirror this function exactly; keep them in sync."""
+    cancelled_on, end_date = _d(row.cancelled_on), _d(row.end_date)
+    if cancelled_on and cancelled_on <= today:
+        return STATUS_CANCELLED
+    if end_date and end_date <= today:
+        return STATUS_EXPIRED
+    if _d(row.start_date) > today:
+        return STATUS_SCHEDULED
+    if _d(row.trial_end_date) > today:
+        return STATUS_TRIALING
+    return STATUS_ACTIVE
+
+
+def current_period(row, today: date):
+    """The billing period that contains today (or the first paid period if the trial is running).
+    Auto-renew keeps rolling forward forever; Fixed Cycles is capped at its last cycle."""
+    anchor = _d(row.trial_end_date)
+    months = max(cint(row.period_months), 1)
+    n = 1
+    elapsed = (today.year - anchor.year) * 12 + (today.month - anchor.month)
+    if elapsed > 0:
+        n = max(1, elapsed // months)
+    while add_months(anchor, n * months) <= today:
+        n += 1
+    while n > 1 and add_months(anchor, (n - 1) * months) > today:
+        n -= 1
+    if row.renewal_mode == RENEWAL_FIXED and cint(row.billing_cycles) > 0:
+        n = min(n, cint(row.billing_cycles))
+    return period_bounds(anchor, months, n)
+
+
+def build_state(row, today: date) -> dict:
+    status = derive_status(row, today)
+    start, end = current_period(row, today)
+    cancelled_on = _d(row.cancelled_on)
+    return {
+        "status": status,
+        "current_period_start": start,
+        "current_period_end": end,
+        # Fixed Cycles: the fixed end date. Auto-renew: the next renewal date.
+        "expiry_date": _d(row.end_date) or end,
+        "cancel_scheduled": bool(cancelled_on and cancelled_on > today),
+    }
+
+
+# Same rules as derive_status, as SQL (used to filter lists without any stored status column).
+_NOT_CANCELLED = "(cancelled_on IS NULL OR cancelled_on > %(today)s)"
+STATUS_SQL = {
+    STATUS_CANCELLED: "(cancelled_on IS NOT NULL AND cancelled_on <= %(today)s)",
+    STATUS_EXPIRED: f"({_NOT_CANCELLED} AND end_date IS NOT NULL AND end_date <= %(today)s)",
+    STATUS_SCHEDULED: f"({_NOT_CANCELLED} AND start_date > %(today)s)",
+    STATUS_TRIALING: f"({_NOT_CANCELLED} AND start_date <= %(today)s AND trial_end_date > %(today)s)",
+    STATUS_ACTIVE: (
+        f"({_NOT_CANCELLED} AND trial_end_date <= %(today)s "
+        "AND (end_date IS NULL OR end_date > %(today)s))"
+    ),
+}
+# live = Scheduled / Trialing / Active
+LIVE_SQL = f"({_NOT_CANCELLED} AND (end_date IS NULL OR end_date > %(today)s))"
+# may use the modules right now = Trialing / Active
+ACCESS_SQL = f"({LIVE_SQL} AND start_date <= %(today)s)"
+
+
+@contextmanager
+def named_lock(key_text: str, wait_seconds: int = 10):
+    """MariaDB named lock: requests with the same key run one after the other.
+    Commit right after taking it (nothing is pending yet) so the next read sees a fresh snapshot,
+    and commit again before releasing so the next holder can see what we wrote."""
+    key = "sub:" + hashlib.md5(key_text.casefold().encode()).hexdigest()
+    if frappe.db.sql("SELECT GET_LOCK(%s, %s)", (key, wait_seconds))[0][0] != 1:
+        frappe.throw("Another request is working on this subscription, please retry", ConflictError)
+    try:
+        frappe.db.commit()
+        yield
+        frappe.db.commit()
+    finally:
+        frappe.db.sql("SELECT RELEASE_LOCK(%s)", (key,))
+
+
+# ------------------------------------------------------------------ validators
+def validate_create_payload(payload: dict) -> dict:
+    payload = payload or {}
+    for field in ("customer", "plan", "start_date"):
+        if _blank_to_none(payload.get(field)) is None:
+            frappe.throw(f"{field} is required")
+
+    data = {
+        "customer": _clean_str(payload["customer"], "customer", 1, MAX_NAME_LENGTH),
+        "plan": _clean_str(payload["plan"], "plan", 1, MAX_NAME_LENGTH),
+        "start_date": _to_date(payload["start_date"], "start_date"),
+    }
+
+    frequency = _blank_to_none(payload.get("billing_frequency"))
+    data["billing_frequency"] = (
+        None if frequency is None else _choice(frequency, "billing_frequency", SUBSCRIPTION_FREQUENCIES)
+    )
+    months = _blank_to_none(payload.get("custom_interval_months"))
+    if months in (0, "0"):  # a client echoing back what GET returned
+        months = None
+    if data["billing_frequency"] == BILLING_CUSTOM:
+        if months is None:
+            frappe.throw("custom_interval_months is required when billing_frequency is Custom")
+        data["custom_interval_months"] = _to_int(months, "custom_interval_months", 1, MAX_CUSTOM_MONTHS)
+    else:
+        if months is not None:
+            frappe.throw("custom_interval_months can only be sent when billing_frequency is Custom")
+        data["custom_interval_months"] = None
+
+    discount = _blank_to_none(payload.get("discount_amount"))
+    data["discount_amount"] = (
+        Decimal("0.00") if discount is None else _to_money(discount, "discount_amount", allow_zero=True)
+    )
+    data["discount_reason"] = _opt_str(payload, "discount_reason", MAX_SHORT_TEXT)
+    data["notes"] = _opt_str(payload, "notes", MAX_NOTES_LENGTH)
+    data["request_id"] = _opt_str(payload, "request_id", MAX_SHORT_TEXT)
+    return data
+
+
+def validate_update_payload(payload: dict) -> dict:
+    payload = payload or {}
+    if _blank_to_none(payload.get("id")) is None:
+        frappe.throw("id is required")
+    result = {"id": _clean_str(payload["id"], "id", 1, MAX_NAME_LENGTH)}
+
+    modified = _blank_to_none(payload.get("modified"))
+    if modified is not None:
+        result["modified"] = _clean_str(modified, "modified")
+
+    if "discount_amount" in payload:
+        if payload["discount_amount"] is None:
+            frappe.throw("discount_amount cannot be null")
+        result["discount_amount"] = _to_money(payload["discount_amount"], "discount_amount", allow_zero=True)
+    if "discount_reason" in payload:
+        value = _blank_to_none(payload["discount_reason"])
+        result["discount_reason"] = None if value is None else _clean_str(value, "discount_reason", 0, MAX_SHORT_TEXT)
+    if "notes" in payload:
+        value = _blank_to_none(payload["notes"])
+        result["notes"] = None if value is None else _clean_str(value, "notes", 0, MAX_NOTES_LENGTH)
+
+    if not any(k in result for k in ("discount_amount", "discount_reason", "notes")):
+        frappe.throw("Nothing to update, send discount_amount, discount_reason or notes")
+    return result
+
+
+def validate_cancel_payload(payload: dict) -> dict:
+    payload = payload or {}
+    if _blank_to_none(payload.get("id")) is None:
+        frappe.throw("id is required")
+    if _blank_to_none(payload.get("reason")) is None:
+        frappe.throw("reason is required")
+    result = {
+        "id": _clean_str(payload["id"], "id", 1, MAX_NAME_LENGTH),
+        "reason": _clean_str(payload["reason"], "reason", 1, MAX_REASON_LENGTH),
+        "immediate": True,
+        "modified": None,
+    }
+    if _blank_to_none(payload.get("immediate")) is not None:
+        result["immediate"] = _to_bool(payload["immediate"], "immediate")
+    modified = _blank_to_none(payload.get("modified"))
+    if modified is not None:
+        result["modified"] = _clean_str(modified, "modified")
+    return result
+
+
+def validate_get_by_id_params(params: dict) -> dict:
+    params = params or {}
+    if _blank_to_none(params.get("id")) is None:
+        frappe.throw("id is required")
+    return {"id": _clean_str(params["id"], "id", 1, MAX_NAME_LENGTH)}
+
+
+def validate_entitlement_params(params: dict) -> dict:
+    params = params or {}
+    if _blank_to_none(params.get("customer")) is None:
+        frappe.throw("customer is required")
+    return {"customer": _clean_str(params["customer"], "customer", 1, MAX_NAME_LENGTH)}
+
+
+def validate_list_params(params: dict) -> dict:
+    params = params or {}
+    sort_by = _opt_str(params, "sort_by") or DEFAULT_SORT_BY
+    if sort_by not in ALLOWED_SORT_FIELDS:
+        frappe.throw(f"sort_by must be one of: {', '.join(sorted(ALLOWED_SORT_FIELDS))}")
+    sort_order = (_opt_str(params, "sort_order") or DEFAULT_SORT_ORDER).lower()
+    if sort_order not in SORT_ORDERS:
+        frappe.throw(f"sort_order must be one of: {', '.join(SORT_ORDERS)}")
+    status = _opt_str(params, "status")
+    if status is not None and status not in ALL_STATUSES:
+        frappe.throw(f"status must be one of: {', '.join(ALL_STATUSES)}")
+    return {
+        "page": _opt_int(params, "page", DEFAULT_PAGE, 1, MAX_PAGE),
+        "page_size": _opt_int(params, "page_size", DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE),
+        "search": _opt_str(params, "search", MAX_NAME_LENGTH),
+        "status": status,
+        "customer": _opt_str(params, "customer", MAX_NAME_LENGTH),
+        "plan": _opt_str(params, "plan", MAX_NAME_LENGTH),
+        "sort_by": sort_by,
+        "sort_order": sort_order,
+    }
+
+
+# ------------------------------------------------------------------ doc helpers
+def get_locked_subscription(sub_id: str):
+    """Load WITH a row lock (SELECT ... FOR UPDATE) in one step."""
+    try:
+        return frappe.get_doc(SUBSCRIPTION_DOCTYPE, sub_id, for_update=True)
+    except frappe.DoesNotExistError:
+        frappe.throw(MSG_NOT_FOUND.format(sub_id=sub_id), frappe.DoesNotExistError)
+
+
+def assert_not_stale(doc, expected_modified) -> None:
+    if not expected_modified:
+        return
+    try:
+        expected = get_datetime(expected_modified)
+    except Exception:
+        frappe.throw("modified is not a valid datetime")
+    if expected != get_datetime(doc.modified):
+        frappe.throw(MSG_STALE, ConflictError)
+
+
+def save_doc(doc) -> None:
+    try:
+        doc.save(ignore_permissions=True)
+    except frappe.TimestampMismatchError:
+        frappe.throw(MSG_STALE, ConflictError)
