@@ -47,7 +47,12 @@ PLAN_UPDATABLE_FIELDS = {
 
 PLAN_EDITABLE_STATUS = "Draft"  # only Draft plans can be edited
 PLAN_ACTIVE_STATUS = "Active"
-PLAN_STATUS_TRANSITIONS = {"Draft": ("Active",)}
+PLAN_INACTIVE_STATUS = "Inactive"
+PLAN_STATUS_TRANSITIONS = {
+    "Draft": ("Active",),
+    "Active": ("Inactive",),
+    "Inactive": ("Active",),
+}
 
 ALLOWED_SORT_FIELDS = {
     "name",
@@ -76,7 +81,7 @@ RETURN_FIELDS_GET_ALL = [
 RETURN_FIELDS_GET_BY_ID = list(ALLOWED_PLAN_FIELDS) + ["name", "creation", "modified", "docstatus"]
 
 
-PLAN_STATUSES = ("Draft", "Active")
+PLAN_STATUSES = ("Draft", "Active", "Inactive")
 DEFAULT_STATUS = "Draft" 
 
 BILLING_FREQUENCIES = ("Monthly", "Quarterly", "Half-Yearly", "Yearly")
