@@ -5,12 +5,15 @@ import frappe
 from frappe.utils import add_days, cint, getdate
 
 from rolaface_subscription.modules.plan.constant import (
+    CURRENCY_DOCTYPE,
     MAX_PRICE,
     MODULE_DOCTYPE,
     PLAN_ACTIVE_STATUS,
     PLAN_DOCTYPE,
+    PLAN_MODULE_DOCTYPE,
     PLAN_MODULES_FIELD,
     PRODUCT_DOCTYPE,
+    RENEWAL_AUTO,
     RENEWAL_FIXED,
 )
 from rolaface_subscription.modules.subscription.constant import (
@@ -24,6 +27,7 @@ from rolaface_subscription.modules.subscription.constant import (
     MAX_FUTURE_START_DAYS,
     MODULE_ROW_FIELDS,
     MSG_NOT_FOUND,
+    STATUS_ACTIVE,
     STATUS_SCHEDULED,
     STATUS_TRIALING,
     SUB_MODULE_DOCTYPE,
@@ -51,10 +55,8 @@ _MODULE_TABLE = f"`tab{SUB_MODULE_DOCTYPE}`"
 
 
 class SubscriptionService:
-    # ================================================================== create
     @staticmethod
     def create_subscription(data: dict) -> dict:
-        # same customer + same plan are processed one after the other (double-click safe)
         with named_lock(f"create|{data['customer']}|{data['plan']}"):
             return SubscriptionService._create(data)
 
@@ -64,18 +66,7 @@ class SubscriptionService:
         plan = SubscriptionService._get_plan(data["plan"])
         today = getdate()
 
-        # idempotency: the same request_id returns the subscription it created the first time
-        request_id = data.get("request_id")
-        if request_id:
-            existing = frappe.db.get_value(
-                SUBSCRIPTION_DOCTYPE, {"request_id": request_id}, ["name", "customer", "plan"], as_dict=True
-            )
-            if existing:
-                if existing.customer != customer.name or existing.plan != plan.name:
-                    frappe.throw("request_id was already used for a different request", ConflictError)
-                return {**SubscriptionService.get_subscription(existing.name), "idempotent_replay": True}
 
-        # one live subscription per customer + plan
         live = frappe.db.sql(
             f"SELECT name FROM {_TABLE} WHERE customer = %(customer)s AND plan = %(plan)s "
             f"AND {LIVE_SQL} LIMIT 1",
@@ -92,7 +83,6 @@ class SubscriptionService:
         if start > add_days(today, MAX_FUTURE_START_DAYS):
             frappe.throw(f"start_date cannot be more than {MAX_FUTURE_START_DAYS} days in the future")
 
-        # billing period length in months (the plan's own, or Custom)
         plan_months = FREQUENCY_MONTHS.get(plan.billing_frequency)
         if not plan_months:
             frappe.throw(f"Plan has an unsupported billing frequency '{plan.billing_frequency}'")
@@ -121,7 +111,6 @@ class SubscriptionService:
                 "plan": plan.name,
                 "plan_name": plan.plan_name,
                 "plan_code": plan.plan_code,
-                "request_id": request_id,
                 "pricing_model": plan.pricing_model,
                 "plan_billing_frequency": plan.billing_frequency,
                 "billing_frequency": frequency,
@@ -141,7 +130,6 @@ class SubscriptionService:
                 "end_date": end_date,
                 "subtotal": float(subtotal),
                 "discount_amount": float(discount),
-                "discount_reason": data.get("discount_reason"),
                 "grand_total": float(grand_total),
                 "notes": data.get("notes"),
                 SUB_MODULES_FIELD: [
@@ -162,9 +150,6 @@ class SubscriptionService:
 
     @staticmethod
     def _compute_pricing(plan_price: Decimal, plan_months: int, months: int, discount: Decimal):
-        """price per billing period = plan price x (chosen months / plan's months).
-        For the plan's own frequency that is exactly the plan price; Custom is scaled.
-        Tax is not calculated here: whoever creates the plan puts it in the base price."""
         if plan_price <= 0 or plan_price > MAX_PRICE:
             frappe.throw("The plan has an invalid price")
         subtotal = (plan_price * months / plan_months).quantize(CENT, rounding=ROUND_HALF_UP)
@@ -174,12 +159,11 @@ class SubscriptionService:
             frappe.throw("discount_amount cannot be more than the price per billing period")
         return subtotal, discount, subtotal - discount
 
-    # ------------------------------------------------------------ lookups
     @staticmethod
     def _get_customer(customer: str):
         row = frappe.db.get_value(CUSTOMER_DOCTYPE, customer, ["name", "customer_name", "disabled"], as_dict=True)
         if not row:
-            frappe.throw(f"Customer '{customer}' not found")
+            frappe.throw(f"Customer '{customer}' not found", frappe.DoesNotExistError)
         if cint(row.disabled):
             frappe.throw(f"Customer '{row.name}' is disabled")
         return row
@@ -189,14 +173,13 @@ class SubscriptionService:
         try:
             doc = frappe.get_doc(PLAN_DOCTYPE, plan)  # loads the module rows too
         except frappe.DoesNotExistError:
-            frappe.throw(f"Plan '{plan}' not found")
+            frappe.throw(f"Plan '{plan}' not found", frappe.DoesNotExistError)
         if doc.status != PLAN_ACTIVE_STATUS:
             frappe.throw(f"Only Active plans can be subscribed, plan '{doc.name}' is '{doc.status}'")
         return doc
 
     @staticmethod
     def _resolve_plan_modules(plan) -> list[dict]:
-        """The plan's modules as they are TODAY: every module and product must still be active."""
         rows = plan.get(PLAN_MODULES_FIELD) or []
         if not rows:
             frappe.throw("The plan has no modules")
@@ -235,7 +218,6 @@ class SubscriptionService:
             for r in rows
         ]
 
-    # ================================================================== read
     @staticmethod
     def _detail(doc) -> dict:
         result = {field: doc.get(field) for field in DETAIL_FIELDS}
@@ -268,10 +250,9 @@ class SubscriptionService:
             values["search"] = f"%{params['search']}%"
         where_sql = " AND ".join(where)
 
-        # sort_by / sort_order are whitelisted in validate_list_params
         order = f"`{params['sort_by']}` {params['sort_order'].upper()}"
         if params["sort_by"] != "name":
-            order += ", `name` ASC"  # stable paging
+            order += ", `name` ASC"  
 
         total = cint(frappe.db.sql(f"SELECT COUNT(*) FROM {_TABLE} WHERE {where_sql}", values)[0][0])
         columns = ", ".join(f"`{c}`" for c in LIST_COLUMNS)
@@ -331,7 +312,6 @@ class SubscriptionService:
                 entry["subscriptions"].append(r.parent)
         return {"customer": name, "has_access": bool(subs), "subscriptions": subs, "modules": list(modules.values())}
 
-    # ================================================================== update
     @staticmethod
     def update_subscription(params: dict) -> dict:
         params = dict(params)
@@ -353,7 +333,7 @@ class SubscriptionService:
                 doc.discount_amount = float(discount)
                 doc.grand_total = float(money(doc.subtotal) - discount)
                 changed = True
-        for field in ("discount_reason", "notes"):
+        for field in ("notes",):
             if field in params and (params[field] or None) != (doc.get(field) or None):
                 doc.set(field, params[field])
                 changed = True
@@ -371,14 +351,236 @@ class SubscriptionService:
             frappe.throw(f"Subscription is already {state['status']}", ConflictError)
         assert_not_stale(doc, params.get("modified"))
 
-        # nothing has been paid for before the trial ends, so Scheduled / Trialing always end now
         immediate = params["immediate"] or state["status"] in (STATUS_SCHEDULED, STATUS_TRIALING)
         if immediate:
             doc.cancelled_on = today
         else:
             if state["cancel_scheduled"]:
                 frappe.throw("Cancellation at period end is already scheduled", ConflictError)
+            if doc.end_date and getdate(state["current_period_end"]) >= getdate(doc.end_date):
+                frappe.throw(f"This subscription already ends on {doc.end_date}, no cancellation needed. "
+                "Use immediate cancel if you want to stop access now.", ConflictError,)
             doc.cancelled_on = state["current_period_end"]  # takes effect on that date, no job needed
         doc.cancel_reason = params["reason"]
         save_doc(doc)
         return SubscriptionService._detail(doc)
+
+    @staticmethod
+    def _currency_symbols(currencies) -> dict:
+        names = sorted({c for c in currencies if c})
+        if not names:
+            return {}
+        rows = frappe.get_all(
+            CURRENCY_DOCTYPE, filters={"name": ["in", names]}, fields=["name", "symbol"], limit_page_length=0
+        )
+        return {r.name: r.symbol for r in rows}
+
+    @staticmethod
+    def _product_breakdown(module_rows: list[dict]) -> list[dict]:
+        included = {}
+        for row in module_rows:
+            if cint(row.get("is_enabled")):
+                included.setdefault(row["product"], []).append(
+                    {"module": row["module"], "module_name": row["module_name"]}
+                )
+        products = frappe.get_all(
+            PRODUCT_DOCTYPE, fields=["name", "product_code", "product_name", "is_active"], limit_page_length=0
+        )
+        totals = {
+            product: cint(count)
+            for product, count in frappe.db.sql(
+                f"SELECT product, COUNT(*) FROM `tab{MODULE_DOCTYPE}` WHERE is_active = 1 GROUP BY product"
+            )
+        }
+        result = []
+        for product in products:
+            modules = included.get(product.name, [])
+            if not cint(product.is_active) and not modules:
+                continue  # an inactive product is only shown if the customer still has modules of it
+            result.append(
+                {
+                    "product": product.name,
+                    "product_code": product.product_code or product.name,
+                    "product_name": product.product_name,
+                    "included": bool(modules),
+                    "included_count": len(modules),
+                    "total_modules": max(totals.get(product.name, 0), len(modules)),
+                    "included_modules": modules,
+                }
+            )
+        result.sort(key=lambda p: (not p["included"], (p["product_name"] or "").lower()))
+        return result
+
+    @staticmethod
+    def get_my_subscription(customer: str) -> dict:
+        """'My Subscription' screen: the customer's current subscription with dates, price and a
+        card for every product (included or not).
+        Current = Active, then Trialing, then Scheduled (newest start first). If the customer has
+        none of those, the most recent ended one is returned so the screen can say Expired / Cancelled."""
+        cust = frappe.db.get_value(CUSTOMER_DOCTYPE, customer, ["name", "customer_name"], as_dict=True)
+        if not cust:
+            frappe.throw(f"Customer '{customer}' not found", frappe.DoesNotExistError)
+        today = getdate()
+
+        cols = (
+            "name, plan, plan_name, start_date, trial_end_date, end_date, cancelled_on, "
+            "period_months, renewal_mode, billing_cycles"
+        )
+        query_values = {"customer": cust.name, "today": today}
+        live_rows = frappe.db.sql(
+            f"SELECT {cols} FROM {_TABLE} WHERE customer = %(customer)s AND {LIVE_SQL} "
+            "ORDER BY start_date DESC, creation DESC LIMIT 100",
+            query_values,
+            as_dict=True,
+        )
+        ended_rows = frappe.db.sql(
+            f"SELECT {cols} FROM {_TABLE} WHERE customer = %(customer)s AND NOT {LIVE_SQL} "
+            "ORDER BY start_date DESC, creation DESC LIMIT 20",
+            query_values,
+            as_dict=True,
+        )
+        rows = live_rows + ended_rows
+        result = {
+            "customer": cust.name,
+            "customer_name": cust.customer_name,
+            "has_subscription": bool(rows),
+            "subscription": None,
+            "other_subscriptions": [],
+        }
+        if not rows:
+            return result
+
+        for row in rows:
+            row.update(build_state(row, today))
+        priority = {STATUS_ACTIVE: 0, STATUS_TRIALING: 1, STATUS_SCHEDULED: 2}
+        rows.sort(key=lambda r: priority.get(r["status"], 3))  # stable: newest start stays first
+
+        detail = SubscriptionService._detail(frappe.get_doc(SUBSCRIPTION_DOCTYPE, rows[0].name))
+        symbols = SubscriptionService._currency_symbols([detail["currency"]])
+        expiry = getdate(detail["expiry_date"]) if detail["expiry_date"] else None
+        detail["currency_symbol"] = symbols.get(detail["currency"])
+        detail["days_left"] = max((expiry - today).days, 0) if expiry else None
+        detail["auto_renew"] = detail["renewal_mode"] == RENEWAL_AUTO and not detail["cancelled_on"]
+        detail["products"] = SubscriptionService._product_breakdown(detail["modules"])
+
+        result["subscription"] = detail
+        result["other_subscriptions"] = [
+            {
+                "name": r.name,
+                "plan": r.plan,
+                "plan_name": r.plan_name,
+                "status": r["status"],
+                "start_date": r.start_date,
+                "expiry_date": r["expiry_date"],
+            }
+            for r in rows[1:]
+        ]
+        return result
+
+    @staticmethod
+    def get_available_plans(params: dict) -> dict:
+        page, page_size = params["page"], params["page_size"]
+        today = getdate()
+
+        current_plans = set()
+        if params.get("customer"):
+            customer = frappe.db.get_value(CUSTOMER_DOCTYPE, params["customer"], "name")
+            if not customer:
+                frappe.throw(f"Customer '{params['customer']}' not found", frappe.DoesNotExistError)
+            current_plans = {
+                r[0]
+                for r in frappe.db.sql(
+                    f"SELECT DISTINCT plan FROM {_TABLE} WHERE customer = %(customer)s AND {LIVE_SQL}",
+                    {"customer": customer, "today": today},
+                )
+            }
+
+        plan_table = f"`tab{PLAN_DOCTYPE}`"
+        total = cint(
+            frappe.db.sql(
+                f"SELECT COUNT(*) FROM {plan_table} WHERE status = %(status)s", {"status": PLAN_ACTIVE_STATUS}
+            )[0][0]
+        )
+        plans = frappe.db.sql(
+            "SELECT name, plan_name, plan_code, description, pricing_model, billing_frequency, currency, "
+            "base_price, setup_fee, trial_enabled, trial_days, renewal_mode, billing_cycles, user_limit "
+            f"FROM {plan_table} WHERE status = %(status)s "
+            "ORDER BY base_price ASC, plan_name ASC, name ASC LIMIT %(limit)s OFFSET %(offset)s",
+            {"status": PLAN_ACTIVE_STATUS, "limit": page_size, "offset": (page - 1) * page_size},
+            as_dict=True,
+        )
+
+        counts = {}  # plan -> product -> number of modules
+        if plans:
+            for row in frappe.db.sql(
+                "SELECT parent, product, COUNT(*) AS module_count "
+                f"FROM `tab{PLAN_MODULE_DOCTYPE}` WHERE parenttype = %(parenttype)s "
+                "AND parentfield = %(parentfield)s AND parent IN %(plans)s GROUP BY parent, product",
+                {
+                    "parenttype": PLAN_DOCTYPE,
+                    "parentfield": PLAN_MODULES_FIELD,
+                    "plans": tuple(p.name for p in plans),
+                },
+                as_dict=True,
+            ):
+                counts.setdefault(row.parent, {})[row.product] = cint(row.module_count)
+
+        products = frappe.get_all(
+            PRODUCT_DOCTYPE, fields=["name", "product_code", "product_name", "is_active"], limit_page_length=0
+        )
+        by_name = {p.name: p for p in products}
+        active_products = [p for p in products if cint(p.is_active)]
+        symbols = SubscriptionService._currency_symbols([p.currency for p in plans])
+
+        items = []
+        for plan in plans:
+            per_product = counts.get(plan.name, {})
+            included = []
+            for code, number in per_product.items():
+                product = by_name.get(code)
+                included.append(
+                    {
+                        "product": code,
+                        "product_code": (product.product_code if product else None) or code,
+                        "product_name": product.product_name if product else code,
+                        "module_count": number,
+                    }
+                )
+            included.sort(key=lambda p: (p["product_name"] or "").lower())
+            excluded = [
+                {"product": p.name, "product_code": p.product_code or p.name, "product_name": p.product_name}
+                for p in active_products
+                if p.name not in per_product
+            ]
+            items.append(
+                {
+                    "name": plan.name,
+                    "plan_name": plan.plan_name,
+                    "plan_code": plan.plan_code,
+                    "description": plan.description,
+                    "pricing_model": plan.pricing_model,
+                    "billing_frequency": plan.billing_frequency,
+                    "currency": plan.currency,
+                    "currency_symbol": symbols.get(plan.currency),
+                    "price": plan.base_price,
+                    "setup_fee": plan.setup_fee,
+                    "trial_days": cint(plan.trial_days) if cint(plan.trial_enabled) else 0,
+                    "renewal_mode": plan.renewal_mode,
+                    "billing_cycles": cint(plan.billing_cycles),
+                    "user_limit": cint(plan.user_limit),
+                    "product_count": len(included),
+                    "module_count": sum(p["module_count"] for p in included),
+                    "products": included,
+                    "excluded_products": excluded,
+                    "is_current_plan": plan.name in current_plans,
+                }
+            )
+        return {
+            "items": items,
+            "pagination": {
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "total_pages": math.ceil(total / page_size) if total else 0,
+            },
+        }

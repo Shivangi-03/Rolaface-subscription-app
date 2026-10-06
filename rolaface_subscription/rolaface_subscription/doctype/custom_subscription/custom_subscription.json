@@ -13,7 +13,6 @@
   "plan",
   "plan_name",
   "plan_code",
-  "request_id",
   "section_plan",
   "pricing_model",
   "plan_billing_frequency",
@@ -42,7 +41,6 @@
   "section_money",
   "subtotal",
   "discount_amount",
-  "discount_reason",
   "column_break_money",
   "grand_total",
   "section_modules",
@@ -112,16 +110,6 @@
    "fieldtype": "Data",
    "label": "Plan Code",
    "read_only": 1
-  },
-  {
-   "description": "Client key that stops duplicate creates",
-   "fieldname": "request_id",
-   "fieldtype": "Data",
-   "hidden": 1,
-   "label": "Request ID",
-   "no_copy": 1,
-   "read_only": 1,
-   "unique": 1
   },
   {
    "fieldname": "section_plan",
@@ -302,11 +290,6 @@
    "non_negative": 1,
    "options": "currency",
    "precision": "2"
-  },
-  {
-   "fieldname": "discount_reason",
-   "fieldtype": "Data",
-   "label": "Discount Reason"
   },
   {
    "fieldname": "column_break_money",
