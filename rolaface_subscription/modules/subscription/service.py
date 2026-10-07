@@ -78,13 +78,6 @@ class SubscriptionService:
         plan = SubscriptionService._get_plan(data["plan"])
         today = getdate()
 
-        end_date = data["end_date"]
-        if end_date <= trial_end:
-            frappe.throw(f"end_date must be after the start date and the trial end date ({trial_end})")
-        if end_date <= today:
-            frappe.throw("end_date must be in the future")
-
-
         live = frappe.db.sql(
             f"SELECT name FROM {_TABLE} WHERE customer = %(customer)s AND plan = %(plan)s "
             f"AND {LIVE_SQL} LIMIT 1",
