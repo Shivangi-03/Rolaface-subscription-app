@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 import frappe
-from frappe.utils import add_months, cint, get_datetime, getdate
+from frappe.utils import add_months, cint, get_datetime, getdate , add_days
 
 from rolaface_subscription.modules.plan.constant import MAX_NAME_LENGTH, RENEWAL_FIXED
 from rolaface_subscription.modules.plan.utils import (
@@ -87,28 +87,36 @@ def derive_status(row, today: date) -> str:
 def current_period(row, today: date):
     anchor = _d(row.trial_end_date)
     months = max(cint(row.period_months), 1)
+    end_date = _d(row.end_date)
+    ref = min(today, add_days(end_date, -1)) if end_date else today  
+
     n = 1
-    elapsed = (today.year - anchor.year) * 12 + (today.month - anchor.month)
+    elapsed = (ref.year - anchor.year) * 12 + (ref.month - anchor.month)
     if elapsed > 0:
         n = max(1, elapsed // months)
-    while add_months(anchor, n * months) <= today:
+    while add_months(anchor, n * months) <= ref:
         n += 1
-    while n > 1 and add_months(anchor, (n - 1) * months) > today:
+    while n > 1 and add_months(anchor, (n - 1) * months) > ref:
         n -= 1
-    if row.renewal_mode == RENEWAL_FIXED and cint(row.billing_cycles) > 0:
-        n = min(n, cint(row.billing_cycles))
-    return period_bounds(anchor, months, n)
+    start, end = period_bounds(anchor, months, n)
+    if end_date and end > end_date:
+        end = end_date
+    return start, end
 
 
-def build_state(row, today: date) -> dict:
+
+def build_state(row, today):
     status = derive_status(row, today)
     start, end = current_period(row, today)
     cancelled_on = _d(row.cancelled_on)
+    expiry = _d(row.end_date) or end
+    if cancelled_on and cancelled_on < expiry:
+        expiry = cancelled_on
     return {
         "status": status,
         "current_period_start": start,
         "current_period_end": end,
-        "expiry_date": _d(row.end_date) or end,
+         "expiry_date": expiry,
         "cancel_scheduled": bool(cancelled_on and cancelled_on > today),
     }
 
@@ -149,7 +157,7 @@ def named_lock(key_text: str, wait_seconds: int = 10):
 
 def validate_create_payload(payload: dict) -> dict:
     payload = payload or {}
-    for field in ("customer", "plan", "start_date"):
+    for field in ("customer", "plan", "start_date","end_date"):
         if _blank_to_none(payload.get(field)) is None:
             frappe.throw(f"{field} is required")
 
@@ -157,6 +165,7 @@ def validate_create_payload(payload: dict) -> dict:
         "customer": _clean_str(payload["customer"], "customer", 1, MAX_NAME_LENGTH),
         "plan": _clean_str(payload["plan"], "plan", 1, MAX_NAME_LENGTH),
         "start_date": _to_date(payload["start_date"], "start_date"),
+        "end_date": _to_date(payload["end_date"], "end_date"),
     }
 
     frequency = _blank_to_none(payload.get("billing_frequency"))
