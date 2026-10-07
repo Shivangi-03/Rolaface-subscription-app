@@ -33,6 +33,8 @@ class CustomSubscription(Document):
         start, trial_end = getdate(self.start_date), getdate(self.trial_end_date)
         if trial_end < start:
             frappe.throw(_("Trial end date cannot be before the start date"))
+        if self.is_new() and not self.end_date:
+            frappe.throw(_("End date is required"))
         if self.end_date and getdate(self.end_date) <= trial_end:
             frappe.throw(_("End date must be after the trial end date"))
 

@@ -109,14 +109,15 @@ class SubscriptionService:
             money(plan.base_price), plan_months, months, data["discount_amount"]
         )
 
-        # dates: the paid period starts when the trial ends (trial is extra free time)
         trial_days = cint(plan.trial_days) if cint(plan.trial_enabled) else 0
         trial_end = add_days(start, trial_days)
-        fixed = plan.renewal_mode == RENEWAL_FIXED
-        total_cycles = cint(plan.billing_cycles) if fixed else 0
-        if fixed and total_cycles < 1:
-            frappe.throw("Plan has invalid billing_cycles for Fixed Cycles")
-        end_date = period_bounds(trial_end, months, total_cycles)[1] if fixed else None
+        end_date = data["end_date"]
+        if end_date <= trial_end:
+            frappe.throw(f"end_date must be after the start date and the trial end date ({trial_end})")
+        if end_date <= today:
+            frappe.throw("end_date must be in the future")
+        renewal_mode = plan.renewal_mode
+        total_cycles = cint(plan.billing_cycles)
 
         doc = frappe.get_doc(
             {
@@ -137,7 +138,7 @@ class SubscriptionService:
                 "setup_fee": float(money(plan.setup_fee)),
                 "trial_enabled": 1 if trial_days else 0,
                 "trial_days": trial_days,
-                "renewal_mode": plan.renewal_mode,
+                "renewal_mode": renewal_mode,
                 "billing_cycles": total_cycles,
                 "user_limit": cint(plan.user_limit),
                 "products": plan.products,
@@ -487,8 +488,7 @@ class SubscriptionService:
         symbols = SubscriptionService._currency_symbols([detail["currency"]])
         expiry = getdate(detail["expiry_date"]) if detail["expiry_date"] else None
         detail["currency_symbol"] = symbols.get(detail["currency"])
-        detail["days_left"] = max((expiry - today).days, 0) if expiry else None
-        detail["auto_renew"] = detail["renewal_mode"] == RENEWAL_AUTO and not detail["cancelled_on"]
+        detail["days_left"] = (max((expiry - today).days, 0) if expiry and detail["status"] in LIVE_STATUSES else 0)
         detail["products"] = SubscriptionService._product_breakdown(detail["modules"])
 
         result["subscription"] = detail

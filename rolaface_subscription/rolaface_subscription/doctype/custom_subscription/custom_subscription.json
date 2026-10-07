@@ -255,7 +255,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Only for Fixed Cycles plans",
+   "description": "Subscription expiry date (sent by the frontend)",
    "fieldname": "end_date",
    "fieldtype": "Date",
    "label": "End Date",
