@@ -1,7 +1,7 @@
 {
  "actions": [],
  "autoname": "naming_series:",
- "creation": "2026-10-05 12:00:00.000000",
+ "creation": "2026-10-05 12:00:00",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
@@ -9,10 +9,12 @@
   "naming_series",
   "customer",
   "customer_name",
+  "auto_sync",
   "column_break_main",
   "plan",
   "plan_name",
   "plan_code",
+  "status",
   "section_plan",
   "pricing_model",
   "plan_billing_frequency",
@@ -46,7 +48,8 @@
   "section_modules",
   "modules",
   "section_notes",
-  "notes"
+  "notes",
+  "amended_from"
  ],
  "fields": [
   {
@@ -200,6 +203,7 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "0",
    "fieldname": "trial_enabled",
    "fieldtype": "Check",
    "label": "Free Trial",
@@ -258,6 +262,7 @@
    "read_only": 1
   },
   {
+   "allow_on_submit": 1,
    "description": "Subscription is Cancelled from this date",
    "fieldname": "cancelled_on",
    "fieldtype": "Date",
@@ -265,6 +270,7 @@
    "read_only": 1
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "cancel_reason",
    "fieldtype": "Small Text",
    "label": "Cancel Reason",
@@ -323,15 +329,46 @@
    "label": "Notes"
   },
   {
+   "allow_on_submit": 1,
    "fieldname": "notes",
    "fieldtype": "Text",
    "label": "Subscription Notes / Commercial Terms"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Custom Subscription",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nScheduled\nTrialing\nActive\nExpired\nCancelled",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "auto_sync",
+   "fieldtype": "Check",
+   "label": "Auto Sync"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
+ "is_submittable": 1,
  "links": [],
- "modified": "2026-10-15 00:00:00.000000",
+ "modified": "2026-10-08 03:29:30.870429",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Subscription",
@@ -354,6 +391,7 @@
  "row_format": "Dynamic",
  "rows_threshold_for_grid_search": 20,
  "search_fields": "customer_name,plan_name",
+ "show_name_in_global_search": 1,
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],

@@ -72,6 +72,8 @@ def handle_api_error(e: Exception, context_message: str = "API request failed"):
         status_code, message = 409, STALE_MESSAGE
     elif isinstance(e, ConflictError):
         status_code = 409
+    elif isinstance(e, CustomerSyncError):
+        status_code = 502
     elif isinstance(e, frappe.PermissionError):
         status_code, message = 403, NO_PERMISSION_MESSAGE
     elif isinstance(e, frappe.ValidationError):

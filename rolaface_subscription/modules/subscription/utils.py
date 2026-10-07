@@ -71,6 +71,8 @@ def _d(value):
 
 
 def derive_status(row, today: date) -> str:
+    """The status the dates say a subscription should have today. Only used to *write* the stored
+    status (on create and by the daily refresh job); reads always use the `status` column."""
 
     cancelled_on, end_date = _d(row.cancelled_on), _d(row.end_date)
     if cancelled_on and cancelled_on <= today:
@@ -101,31 +103,15 @@ def current_period(row, today: date):
 
 
 def build_state(row, today: date) -> dict:
-    status = derive_status(row, today)
+    """Billing-period details for a subscription. The status itself comes from the stored column."""
     start, end = current_period(row, today)
     cancelled_on = _d(row.cancelled_on)
     return {
-        "status": status,
         "current_period_start": start,
         "current_period_end": end,
         "expiry_date": _d(row.end_date) or end,
         "cancel_scheduled": bool(cancelled_on and cancelled_on > today),
     }
-
-
-_NOT_CANCELLED = "(cancelled_on IS NULL OR cancelled_on > %(today)s)"
-STATUS_SQL = {
-    STATUS_CANCELLED: "(cancelled_on IS NOT NULL AND cancelled_on <= %(today)s)",
-    STATUS_EXPIRED: f"({_NOT_CANCELLED} AND end_date IS NOT NULL AND end_date <= %(today)s)",
-    STATUS_SCHEDULED: f"({_NOT_CANCELLED} AND start_date > %(today)s)",
-    STATUS_TRIALING: f"({_NOT_CANCELLED} AND start_date <= %(today)s AND trial_end_date > %(today)s)",
-    STATUS_ACTIVE: (
-        f"({_NOT_CANCELLED} AND trial_end_date <= %(today)s "
-        "AND (end_date IS NULL OR end_date > %(today)s))"
-    ),
-}
-LIVE_SQL = f"({_NOT_CANCELLED} AND (end_date IS NULL OR end_date > %(today)s))"
-ACCESS_SQL = f"({LIVE_SQL} AND start_date <= %(today)s)"
 
 
 @contextmanager
@@ -180,6 +166,8 @@ def validate_create_payload(payload: dict) -> dict:
         Decimal("0.00") if discount is None else _to_money(discount, "discount_amount", allow_zero=True)
     )
     data["notes"] = _opt_str(payload, "notes", MAX_NOTES_LENGTH)
+    auto_sync = _blank_to_none(payload.get("auto_sync"))
+    data["auto_sync"] = True if auto_sync is None else _to_bool(auto_sync, "auto_sync")
     return data
 
 
@@ -200,8 +188,23 @@ def validate_update_payload(payload: dict) -> dict:
     if "notes" in payload:
         value = _blank_to_none(payload["notes"])
         result["notes"] = None if value is None else _clean_str(value, "notes", 0, MAX_NOTES_LENGTH)
-    if not any(k in result for k in ("discount_amount", "notes")):
-        frappe.throw("Nothing to update, send discount_amount or notes")
+    if "auto_sync" in payload:
+        if payload["auto_sync"] is None:
+            frappe.throw("auto_sync cannot be null")
+        result["auto_sync"] = _to_bool(payload["auto_sync"], "auto_sync")
+    if not any(k in result for k in ("discount_amount", "notes", "auto_sync")):
+        frappe.throw("Nothing to update, send discount_amount, notes or auto_sync")
+    return result
+
+
+def validate_submit_payload(payload: dict) -> dict:
+    payload = payload or {}
+    if _blank_to_none(payload.get("id")) is None:
+        frappe.throw("id is required")
+    result = {"id": _clean_str(payload["id"], "id", 1, MAX_NAME_LENGTH), "modified": None}
+    modified = _blank_to_none(payload.get("modified"))
+    if modified is not None:
+        result["modified"] = _clean_str(modified, "modified")
     return result
 
 

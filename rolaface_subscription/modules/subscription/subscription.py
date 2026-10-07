@@ -9,6 +9,7 @@ from rolaface_subscription.modules.subscription.utils import (
     validate_available_plans_params,
     validate_list_params,
     validate_my_subscription_params,
+    validate_submit_payload,
     validate_update_payload,
 )
 from rolaface_subscription.utils.api_response import (
@@ -27,6 +28,14 @@ def create(**payload):
     except Exception as e:
         return handle_api_error(e, "Custom Subscription create API failed")
 
+@frappe.whitelist(allow_guest=False, methods=["PUT"])
+def submit(**payload):
+    try:
+        data = validate_submit_payload(payload)
+        result = SubscriptionService.submit_subscription(data)
+        return send_response(message="Subscription submitted successfully", data=result)
+    except Exception as e:
+        return handle_api_error(e, "Custom Subscription submit API failed")
 
 @frappe.whitelist(allow_guest=False, methods=["GET"])
 def get(**params):

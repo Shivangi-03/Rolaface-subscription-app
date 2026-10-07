@@ -150,6 +150,12 @@ after_migrate = "rolaface_subscription.seeders.run_all_seeders"
 # Scheduled Tasks
 # ---------------
 
+scheduler_events = {
+	"daily": [
+		"rolaface_subscription.modules.subscription.tasks.refresh_subscription_statuses",
+	],
+}
+
 # scheduler_events = {
 # 	"all": [
 # 		"rolaface_subscription.tasks.all"

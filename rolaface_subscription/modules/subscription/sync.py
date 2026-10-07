@@ -1,7 +1,6 @@
 import json
 import frappe
 import requests
-from frappe.utils import getdate
 
 from rolaface_subscription.modules.subscription.constant import (
     CUSTOMER_BACKEND_URL_FIELD,
@@ -9,7 +8,6 @@ from rolaface_subscription.modules.subscription.constant import (
     CUSTOMER_SYNC_CREATE_PATH,
     CUSTOMER_SYNC_DELETE_PATH,
 )
-from rolaface_subscription.modules.subscription.utils import build_state
 from rolaface_subscription.utils.api_response import CustomerSyncError
 
 
@@ -57,7 +55,7 @@ def _remote_succeeded(res) -> bool:
 def build_sync_payload(doc) -> dict:
     return {
         "masterSubscriptionName": doc.name,
-        "subscriptionStatus": build_state(doc, getdate())["status"],
+        "subscriptionStatus": doc.status,
         # the whole subscription (with module rows) is stored in the customer's JSON field
         "details": json.loads(frappe.as_json(doc.as_dict(convert_dates_to_str=True))),
     }

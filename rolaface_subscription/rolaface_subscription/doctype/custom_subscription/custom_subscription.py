@@ -7,6 +7,7 @@ from frappe.model.document import Document
 from frappe.utils import flt, getdate
 
 from rolaface_subscription.modules.subscription.constant import MAX_CUSTOM_MONTHS
+from rolaface_subscription.modules.subscription import doc_events
 
 
 class CustomSubscription(Document):
@@ -41,5 +42,14 @@ class CustomSubscription(Document):
                 frappe.throw(_("Row {0}: module {1} is added more than once").format(row.idx, row.module))
             seen.add(row.module)
 
-    def on_trash(self):
-        frappe.throw(_("Subscriptions cannot be deleted. Cancel the subscription instead."))
+    def before_submit(self):
+        doc_events.before_submit(self)
+
+    def on_submit(self):
+        doc_events.on_submit(self)
+
+    def before_cancel(self):
+        doc_events.before_cancel(self)
+
+    # def on_trash(self):
+    #     frappe.throw(_("Subscriptions cannot be deleted. Cancel the subscription instead."))

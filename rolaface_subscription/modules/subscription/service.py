@@ -1,9 +1,7 @@
 import math
 from decimal import ROUND_HALF_UP, Decimal
-
 import frappe
 from frappe.utils import add_days, cint, getdate
-
 from rolaface_subscription.modules.plan.constant import (
     CURRENCY_DOCTYPE,
     MAX_PRICE,
@@ -17,9 +15,11 @@ from rolaface_subscription.modules.plan.constant import (
     RENEWAL_FIXED,
 )
 from rolaface_subscription.modules.subscription.constant import (
+    ACCESS_STATUSES,
     BILLING_CUSTOM,
     CUSTOMER_DOCTYPE,
     DETAIL_FIELDS,
+    ENDED_STATUSES,
     FREQUENCY_MONTHS,
     LIST_COLUMNS,
     LIVE_STATUSES,
@@ -27,7 +27,9 @@ from rolaface_subscription.modules.subscription.constant import (
     MAX_FUTURE_START_DAYS,
     MODULE_ROW_FIELDS,
     MSG_NOT_FOUND,
+    OPEN_STATUSES,
     STATUS_ACTIVE,
+    STATUS_DRAFT,
     STATUS_SCHEDULED,
     STATUS_TRIALING,
     SUB_MODULE_DOCTYPE,
@@ -36,10 +38,7 @@ from rolaface_subscription.modules.subscription.constant import (
     SUBSCRIPTION_SERIES,
 )
 from rolaface_subscription.modules.subscription.utils import (
-    ACCESS_SQL,
     CENT,
-    LIVE_SQL,
-    STATUS_SQL,
     assert_not_stale,
     build_state,
     get_locked_subscription,
@@ -48,28 +47,35 @@ from rolaface_subscription.modules.subscription.utils import (
     period_bounds,
     save_doc,
 )
-from rolaface_subscription.modules.subscription.sync import (
-    delete_subscription_from_customer,
-    sync_subscription_to_customer,
-)
 from rolaface_subscription.utils.api_response import ConflictError
 
-_TABLE = f"`tab{SUBSCRIPTION_DOCTYPE}`"
-_MODULE_TABLE = f"`tab{SUB_MODULE_DOCTYPE}`"
+# fields needed to work out a subscription's billing period (build_state)
+STATE_COLUMNS = [
+    "name", "status", "plan", "plan_name", "start_date", "trial_end_date", "end_date", "cancelled_on",
+    "period_months", "renewal_mode", "billing_cycles",
+]
 
 
 class SubscriptionService:
     @staticmethod
     def create_subscription(data: dict) -> dict:
-        synced = None
-        try:
-            with named_lock(f"create|{data['customer']}|{data['plan']}"):
-                doc = SubscriptionService._create(data)
-                synced = sync_subscription_to_customer(doc)
-        except Exception:
-            if synced:
-                delete_subscription_from_customer(synced, doc.name)
-            raise
+        with named_lock(f"create|{data['customer']}|{data['plan']}"):
+            doc = SubscriptionService._create(data)
+        return SubscriptionService._detail(doc)
+
+    @staticmethod
+    def submit_subscription(params: dict) -> dict:
+        row = frappe.db.get_value(SUBSCRIPTION_DOCTYPE, params["id"], ["customer", "plan"], as_dict=True)
+        if not row:
+            frappe.throw(MSG_NOT_FOUND.format(sub_id=params["id"]), frappe.DoesNotExistError)
+
+        # same lock as create, so a second subscription for this customer + plan cannot sneak in
+        with named_lock(f"create|{row.customer}|{row.plan}"):
+            doc = get_locked_subscription(params["id"])
+            if doc.docstatus != 0 or doc.status != STATUS_DRAFT:
+                frappe.throw(f"Only Draft subscriptions can be submitted, this one is {doc.status}", ConflictError)
+            assert_not_stale(doc, params.get("modified"))
+            doc.submit()  # status + customer site sync happen in doc_events.before_submit / on_submit
         return SubscriptionService._detail(doc)
 
     @staticmethod
@@ -79,13 +85,11 @@ class SubscriptionService:
         today = getdate()
 
 
-        live = frappe.db.sql(
-            f"SELECT name FROM {_TABLE} WHERE customer = %(customer)s AND plan = %(plan)s "
-            f"AND {LIVE_SQL} LIMIT 1",
-            {"customer": customer.name, "plan": plan.name, "today": today},
-        )
-        if live:
-            frappe.throw("This customer already has a live subscription for this plan", ConflictError)
+        if frappe.db.exists(
+            SUBSCRIPTION_DOCTYPE,
+            {"customer": customer.name, "plan": plan.name, "status": ["in", OPEN_STATUSES]},
+        ):
+            frappe.throw("This customer already has a draft or live subscription for this plan", ConflictError)
 
         modules = SubscriptionService._resolve_plan_modules(plan)
 
@@ -144,6 +148,7 @@ class SubscriptionService:
                 "discount_amount": float(discount),
                 "grand_total": float(grand_total),
                 "notes": data.get("notes"),
+                "auto_sync": 1 if data.get("auto_sync", True) else 0,
                 SUB_MODULES_FIELD: [
                     {
                         "module": m["module"],
@@ -156,6 +161,7 @@ class SubscriptionService:
                 ],
             }
         )
+        doc.status = STATUS_DRAFT
         doc.flags.via_service = True
         doc.insert(ignore_permissions=True)
         return doc
@@ -250,29 +256,29 @@ class SubscriptionService:
         today = getdate()
         page, page_size = params["page"], params["page_size"]
 
-        where, values = ["1 = 1"], {"today": today}
-        if params.get("status"):
-            where.append(STATUS_SQL[params["status"]])  # fixed SQL text, no user input inside
-        for key in ("customer", "plan"):
-            if params.get(key):
-                where.append(f"`{key}` = %({key})s")
-                values[key] = params[key]
+        filters = {key: params[key] for key in ("status", "customer", "plan") if params.get(key)}
+        or_filters = None
         if params.get("search"):
-            where.append("(`name` LIKE %(search)s OR `customer_name` LIKE %(search)s)")
-            values["search"] = f"%{params['search']}%"
-        where_sql = " AND ".join(where)
+            search = f"%{params['search']}%"
+            or_filters = {"name": ["like", search], "customer_name": ["like", search]}
 
-        order = f"`{params['sort_by']}` {params['sort_order'].upper()}"
+        order = f"{params['sort_by']} {params['sort_order']}"  # sort_by / sort_order are allow-listed
         if params["sort_by"] != "name":
-            order += ", `name` ASC"  
+            order += ", name asc"
 
-        total = cint(frappe.db.sql(f"SELECT COUNT(*) FROM {_TABLE} WHERE {where_sql}", values)[0][0])
-        columns = ", ".join(f"`{c}`" for c in LIST_COLUMNS)
-        rows = frappe.db.sql(
-            f"SELECT {columns} FROM {_TABLE} WHERE {where_sql} ORDER BY {order} "
-            "LIMIT %(limit)s OFFSET %(offset)s",
-            {**values, "limit": page_size, "offset": (page - 1) * page_size},
-            as_dict=True,
+        total = cint(
+            frappe.get_all(
+                SUBSCRIPTION_DOCTYPE, filters=filters, or_filters=or_filters, fields=[{"COUNT": "*", "as": "total"}]
+            )[0].total
+        )
+        rows = frappe.get_all(
+            SUBSCRIPTION_DOCTYPE,
+            filters=filters,
+            or_filters=or_filters,
+            fields=LIST_COLUMNS,
+            order_by=order,
+            limit_start=(page - 1) * page_size,
+            limit_page_length=page_size,
         )
         for row in rows:
             row.update(build_state(row, today))
@@ -293,28 +299,29 @@ class SubscriptionService:
         if not name:
             frappe.throw(f"Customer '{customer}' not found", frappe.DoesNotExistError)
         today = getdate()
-        subs = frappe.db.sql(
-            "SELECT name, plan, plan_name, start_date, trial_end_date, end_date, cancelled_on, "
-            f"period_months, renewal_mode, billing_cycles FROM {_TABLE} "
-            f"WHERE customer = %(customer)s AND {ACCESS_SQL}",
-            {"customer": name, "today": today},
-            as_dict=True,
+        subs = frappe.get_all(
+            SUBSCRIPTION_DOCTYPE,
+            filters={"customer": name, "status": ["in", ACCESS_STATUSES]},
+            fields=STATE_COLUMNS,
+            order_by="creation asc",
+            limit_page_length=0,
         )
         for sub in subs:
             sub.update(build_state(sub, today))
 
         modules = {}
         if subs:
-            rows = frappe.db.sql(
-                f"SELECT parent, module, module_name, product FROM {_MODULE_TABLE} "
-                "WHERE parenttype = %(parenttype)s AND parentfield = %(parentfield)s "
-                "AND is_enabled = 1 AND parent IN %(parents)s",
-                {
+            rows = frappe.get_all(
+                SUB_MODULE_DOCTYPE,
+                filters={
                     "parenttype": SUBSCRIPTION_DOCTYPE,
                     "parentfield": SUB_MODULES_FIELD,
-                    "parents": tuple(s.name for s in subs),
+                    "is_enabled": 1,
+                    "parent": ["in", [s.name for s in subs]],
                 },
-                as_dict=True,
+                fields=["parent", "module", "module_name", "product"],
+                order_by="parent asc, idx asc",
+                limit_page_length=0,
             )
             for r in rows:
                 entry = modules.setdefault(
@@ -331,19 +338,26 @@ class SubscriptionService:
         expected_modified = params.pop("modified", None)
 
         doc = get_locked_subscription(sub_id)
-        status = build_state(doc, getdate())["status"]
-        if status not in LIVE_STATUSES:
-            frappe.throw(f"A {status} subscription cannot be edited", ConflictError)
+        if doc.status not in OPEN_STATUSES:
+            frappe.throw(f"A {doc.status} subscription cannot be edited", ConflictError)
         assert_not_stale(doc, expected_modified)
 
         changed = False
         if "discount_amount" in params:
+            if doc.docstatus != 0:
+                frappe.throw("discount_amount can only be changed while the subscription is a Draft", ConflictError)
             discount = params["discount_amount"]
             if discount > money(doc.subtotal):
                 frappe.throw("discount_amount cannot be more than the price per billing period")
             if discount != money(doc.discount_amount):
                 doc.discount_amount = float(discount)
                 doc.grand_total = float(money(doc.subtotal) - discount)
+                changed = True
+        if "auto_sync" in params:
+            if doc.docstatus != 0:
+                frappe.throw("auto_sync can only be changed while the subscription is a Draft", ConflictError)
+            if cint(params["auto_sync"]) != cint(doc.auto_sync):
+                doc.auto_sync = cint(params["auto_sync"])
                 changed = True
         for field in ("notes",):
             if field in params and (params[field] or None) != (doc.get(field) or None):
@@ -359,22 +373,26 @@ class SubscriptionService:
         doc = get_locked_subscription(params["id"])
         today = getdate()
         state = build_state(doc, today)
-        if state["status"] not in LIVE_STATUSES:
-            frappe.throw(f"Subscription is already {state['status']}", ConflictError)
+        if doc.status == STATUS_DRAFT:
+            frappe.throw("A Draft subscription cannot be cancelled, it was never submitted", ConflictError)
+        if doc.status not in LIVE_STATUSES:
+            frappe.throw(f"Subscription is already {doc.status}", ConflictError)
         assert_not_stale(doc, params.get("modified"))
 
-        immediate = params["immediate"] or state["status"] in (STATUS_SCHEDULED, STATUS_TRIALING)
+        immediate = params["immediate"] or doc.status in (STATUS_SCHEDULED, STATUS_TRIALING)
+        doc.cancel_reason = params["reason"]
         if immediate:
             doc.cancelled_on = today
+            doc.flags.ignore_permissions = True
+            doc.cancel()  # Frappe cancel: docstatus 2, status set in doc_events.before_cancel
         else:
             if state["cancel_scheduled"]:
                 frappe.throw("Cancellation at period end is already scheduled", ConflictError)
             if doc.end_date and getdate(state["current_period_end"]) >= getdate(doc.end_date):
                 frappe.throw(f"This subscription already ends on {doc.end_date}, no cancellation needed. "
                 "Use immediate cancel if you want to stop access now.", ConflictError,)
-            doc.cancelled_on = state["current_period_end"]  # takes effect on that date, no job needed
-        doc.cancel_reason = params["reason"]
-        save_doc(doc)
+            doc.cancelled_on = state["current_period_end"]  # the daily status job cancels it on that date
+            save_doc(doc)
         return SubscriptionService._detail(doc)
 
     @staticmethod
@@ -399,9 +417,13 @@ class SubscriptionService:
             PRODUCT_DOCTYPE, fields=["name", "product_code", "product_name", "is_active"], limit_page_length=0
         )
         totals = {
-            product: cint(count)
-            for product, count in frappe.db.sql(
-                f"SELECT product, COUNT(*) FROM `tab{MODULE_DOCTYPE}` WHERE is_active = 1 GROUP BY product"
+            row.product: cint(row.module_count)
+            for row in frappe.get_all(
+                MODULE_DOCTYPE,
+                filters={"is_active": 1},
+                fields=["product", {"COUNT": "*", "as": "module_count"}],
+                group_by="product",
+                order_by="product asc",
             )
         }
         result = []
@@ -434,23 +456,17 @@ class SubscriptionService:
             frappe.throw(f"Customer '{customer}' not found", frappe.DoesNotExistError)
         today = getdate()
 
-        cols = (
-            "name, plan, plan_name, start_date, trial_end_date, end_date, cancelled_on, "
-            "period_months, renewal_mode, billing_cycles"
-        )
-        query_values = {"customer": cust.name, "today": today}
-        live_rows = frappe.db.sql(
-            f"SELECT {cols} FROM {_TABLE} WHERE customer = %(customer)s AND {LIVE_SQL} "
-            "ORDER BY start_date DESC, creation DESC LIMIT 100",
-            query_values,
-            as_dict=True,
-        )
-        ended_rows = frappe.db.sql(
-            f"SELECT {cols} FROM {_TABLE} WHERE customer = %(customer)s AND NOT {LIVE_SQL} "
-            "ORDER BY start_date DESC, creation DESC LIMIT 20",
-            query_values,
-            as_dict=True,
-        )
+        def fetch(status_filter, limit):
+            return frappe.get_all(
+                SUBSCRIPTION_DOCTYPE,
+                filters={"customer": cust.name, "status": status_filter},
+                fields=STATE_COLUMNS,
+                order_by="start_date desc, creation desc",
+                limit_page_length=limit,
+            )
+
+        live_rows = fetch(["in", LIVE_STATUSES], 100)
+        ended_rows = fetch(["in", ENDED_STATUSES], 20)
         rows = live_rows + ended_rows
         result = {
             "customer": cust.name,
@@ -492,48 +508,48 @@ class SubscriptionService:
     @staticmethod
     def get_available_plans(params: dict) -> dict:
         page, page_size = params["page"], params["page_size"]
-        today = getdate()
 
         current_plans = set()
         if params.get("customer"):
             customer = frappe.db.get_value(CUSTOMER_DOCTYPE, params["customer"], "name")
             if not customer:
                 frappe.throw(f"Customer '{params['customer']}' not found", frappe.DoesNotExistError)
-            current_plans = {
-                r[0]
-                for r in frappe.db.sql(
-                    f"SELECT DISTINCT plan FROM {_TABLE} WHERE customer = %(customer)s AND {LIVE_SQL}",
-                    {"customer": customer, "today": today},
+            current_plans = set(
+                frappe.get_all(
+                    SUBSCRIPTION_DOCTYPE,
+                    filters={"customer": customer, "status": ["in", LIVE_STATUSES]},
+                    pluck="plan",
+                    limit_page_length=0,
                 )
-            }
+            )
 
-        plan_table = f"`tab{PLAN_DOCTYPE}`"
-        total = cint(
-            frappe.db.sql(
-                f"SELECT COUNT(*) FROM {plan_table} WHERE status = %(status)s", {"status": PLAN_ACTIVE_STATUS}
-            )[0][0]
-        )
-        plans = frappe.db.sql(
-            "SELECT name, plan_name, plan_code, description, pricing_model, billing_frequency, currency, "
-            "base_price, setup_fee, trial_enabled, trial_days, renewal_mode, billing_cycles, user_limit "
-            f"FROM {plan_table} WHERE status = %(status)s "
-            "ORDER BY base_price ASC, plan_name ASC, name ASC LIMIT %(limit)s OFFSET %(offset)s",
-            {"status": PLAN_ACTIVE_STATUS, "limit": page_size, "offset": (page - 1) * page_size},
-            as_dict=True,
+        total = frappe.db.count(PLAN_DOCTYPE, {"status": PLAN_ACTIVE_STATUS})
+        plans = frappe.get_all(
+            PLAN_DOCTYPE,
+            filters={"status": PLAN_ACTIVE_STATUS},
+            fields=[
+                "name", "plan_name", "plan_code", "description", "pricing_model", "billing_frequency", "currency",
+                "base_price", "setup_fee", "trial_enabled", "trial_days", "renewal_mode", "billing_cycles",
+                "user_limit",
+            ],
+            order_by="base_price asc, plan_name asc, name asc",
+            limit_start=(page - 1) * page_size,
+            limit_page_length=page_size,
         )
 
         counts = {}  # plan -> product -> number of modules
         if plans:
-            for row in frappe.db.sql(
-                "SELECT parent, product, COUNT(*) AS module_count "
-                f"FROM `tab{PLAN_MODULE_DOCTYPE}` WHERE parenttype = %(parenttype)s "
-                "AND parentfield = %(parentfield)s AND parent IN %(plans)s GROUP BY parent, product",
-                {
+            for row in frappe.get_all(
+                PLAN_MODULE_DOCTYPE,
+                filters={
                     "parenttype": PLAN_DOCTYPE,
                     "parentfield": PLAN_MODULES_FIELD,
-                    "plans": tuple(p.name for p in plans),
+                    "parent": ["in", [p.name for p in plans]],
                 },
-                as_dict=True,
+                fields=["parent", "product", {"COUNT": "*", "as": "module_count"}],
+                group_by="parent, product",
+                order_by="parent asc, product asc",
+                limit_page_length=0,
             ):
                 counts.setdefault(row.parent, {})[row.product] = cint(row.module_count)
 

@@ -6,13 +6,17 @@ SUB_MODULES_FIELD = "modules"
 SUBSCRIPTION_SERIES = "SUB-.YYYY.-.####"
 
 
+STATUS_DRAFT = "Draft"
 STATUS_SCHEDULED = "Scheduled"
 STATUS_TRIALING = "Trialing"  
 STATUS_ACTIVE = "Active"
 STATUS_EXPIRED = "Expired"  
 STATUS_CANCELLED = "Cancelled"
 LIVE_STATUSES = (STATUS_SCHEDULED, STATUS_TRIALING, STATUS_ACTIVE)
-ALL_STATUSES = LIVE_STATUSES + (STATUS_EXPIRED, STATUS_CANCELLED)
+ACCESS_STATUSES = (STATUS_TRIALING, STATUS_ACTIVE)
+ENDED_STATUSES = (STATUS_EXPIRED, STATUS_CANCELLED)
+OPEN_STATUSES = (STATUS_DRAFT,) + LIVE_STATUSES
+ALL_STATUSES = OPEN_STATUSES + ENDED_STATUSES
 
 FREQUENCY_MONTHS = {"Monthly": 1, "Quarterly": 3, "Half-Yearly": 6, "Yearly": 12}
 BILLING_CUSTOM = "Custom"
@@ -36,6 +40,7 @@ ALLOWED_SORT_FIELDS = {"name", "creation", "modified", "customer_name", "start_d
 
 LIST_COLUMNS = [
     "name",
+    "status",
     "customer",
     "customer_name",
     "plan",
@@ -69,6 +74,7 @@ DETAIL_FIELDS = LIST_COLUMNS + [
     "products",
     "cancel_reason",
     "notes",
+    "auto_sync",
 ]
 
 MODULE_ROW_FIELDS = ["name", "module", "module_name", "product", "price", "is_enabled"]
