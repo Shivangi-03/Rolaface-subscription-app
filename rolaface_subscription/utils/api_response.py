@@ -16,6 +16,11 @@ class ConflictError(frappe.ValidationError):
     http_status_code = 409
 
 
+class CustomerSyncError(frappe.ValidationError):
+    """The customer site rejected or could not be reached for a sync call."""
+    http_status_code = 502
+
+
 def _respond(status, message, status_code, data=None, pagination=None):
     payload = {"status_code": status_code, "status": status, "message": message}
     if data is not None:

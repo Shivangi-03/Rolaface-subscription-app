@@ -48,6 +48,10 @@ from rolaface_subscription.modules.subscription.utils import (
     period_bounds,
     save_doc,
 )
+from rolaface_subscription.modules.subscription.sync import (
+    delete_subscription_from_customer,
+    sync_subscription_to_customer,
+)
 from rolaface_subscription.utils.api_response import ConflictError
 
 _TABLE = f"`tab{SUBSCRIPTION_DOCTYPE}`"
@@ -57,11 +61,19 @@ _MODULE_TABLE = f"`tab{SUB_MODULE_DOCTYPE}`"
 class SubscriptionService:
     @staticmethod
     def create_subscription(data: dict) -> dict:
-        with named_lock(f"create|{data['customer']}|{data['plan']}"):
-            return SubscriptionService._create(data)
+        synced = None
+        try:
+            with named_lock(f"create|{data['customer']}|{data['plan']}"):
+                doc = SubscriptionService._create(data)
+                synced = sync_subscription_to_customer(doc)
+        except Exception:
+            if synced:
+                delete_subscription_from_customer(synced, doc.name)
+            raise
+        return SubscriptionService._detail(doc)
 
     @staticmethod
-    def _create(data: dict) -> dict:
+    def _create(data: dict):
         customer = SubscriptionService._get_customer(data["customer"])
         plan = SubscriptionService._get_plan(data["plan"])
         today = getdate()
@@ -146,7 +158,7 @@ class SubscriptionService:
         )
         doc.flags.via_service = True
         doc.insert(ignore_permissions=True)
-        return SubscriptionService._detail(doc)
+        return doc
 
     @staticmethod
     def _compute_pricing(plan_price: Decimal, plan_months: int, months: int, discount: Decimal):

@@ -75,3 +75,9 @@ MODULE_ROW_FIELDS = ["name", "module", "module_name", "product", "price", "is_en
 
 MSG_NOT_FOUND = "Subscription '{sub_id}' not found"
 MSG_STALE = "This subscription was changed by someone else, please reload and try again"
+
+# customer site sync: the backend URL of the customer's own site is stored in Customer.website
+CUSTOMER_BACKEND_URL_FIELD = "website"
+
+CUSTOMER_SYNC_CREATE_PATH = "/api/method/auth_api.module.subscription.api.create"
+CUSTOMER_SYNC_DELETE_PATH = "/api/method/auth_api.module.subscription.api.delete"
