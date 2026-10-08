@@ -84,13 +84,17 @@ def derive_status(row, today: date) -> str:
         return STATUS_EXPIRED
     if _d(row.start_date) > today:
         return STATUS_SCHEDULED
-    if _d(row.trial_end_date) > today:
+    trial_end = _d(row.trial_end_date)
+    if trial_end and trial_end > today:
         return STATUS_TRIALING
     return STATUS_ACTIVE
 
+def paid_start(row) -> date:
+    """The day the paid period starts: the trial end date, or the start date when there is no trial."""
+    return _d(row.trial_end_date) or _d(row.start_date)
 
 def current_period(row, today: date):
-    anchor = _d(row.trial_end_date)
+    anchor = paid_start(row)
     months = max(cint(row.period_months), 1)
     end_date = _d(row.end_date)
     ref = min(today, add_days(end_date, -1)) if end_date else today  

@@ -57,6 +57,12 @@ STATE_COLUMNS = [
     "period_months", "renewal_mode", "billing_cycles",
 ]
 
+def _check_end_after_paid_start(end_date, start_date, trial_end_date) -> None:
+    if trial_end_date and end_date <= trial_end_date:
+        frappe.throw(f"end_date must be after the trial end date ({trial_end_date})")
+    if end_date <= start_date:
+        frappe.throw("end_date must be after the start date")
+
 
 class SubscriptionService:
     @staticmethod
@@ -114,10 +120,9 @@ class SubscriptionService:
         )
 
         trial_days = cint(plan.trial_days) if cint(plan.trial_enabled) else 0
-        trial_end = add_days(start, trial_days)
+        trial_end = add_days(start, trial_days) if trial_days else None  # no trial -> no trial end date
         end_date = data["end_date"]
-        if end_date <= trial_end:
-            frappe.throw(f"end_date must be after the start date and the trial end date ({trial_end})")
+        _check_end_after_paid_start(end_date, start, trial_end)
         if end_date <= today:
             frappe.throw("end_date must be in the future")
         renewal_mode = plan.renewal_mode
@@ -397,8 +402,8 @@ class SubscriptionService:
             trial_days = cint(plan.trial_days) if cint(plan.trial_enabled) else 0
         else:
             modules = None
-            trial_days = cint(doc.trial_days)  # keep the snapshot, do not re-read the plan
-        trial_end = add_days(start, trial_days)
+            trial_days = cint(doc.trial_days) if cint(doc.trial_enabled) else 0
+        trial_end = add_days(start, trial_days) if trial_days else None
 
         # date rules only when something date-related really changed
         if plan_changed or start_changed or end_changed:
@@ -407,8 +412,7 @@ class SubscriptionService:
                     frappe.throw(f"start_date cannot be more than {MAX_BACKDATE_DAYS} days in the past")
                 if start > add_days(today, MAX_FUTURE_START_DAYS):
                     frappe.throw(f"start_date cannot be more than {MAX_FUTURE_START_DAYS} days in the future")
-            if end <= trial_end:
-                frappe.throw(f"end_date must be after the start date and the trial end date ({trial_end})")
+            _check_end_after_paid_start(end, start, trial_end)
             if end <= today:
                 frappe.throw("end_date must be in the future")
 
@@ -438,7 +442,7 @@ class SubscriptionService:
         if start != getdate(doc.start_date):
             doc.start_date = start
             changed = True
-        if trial_end != getdate(doc.trial_end_date):
+        if trial_end != (getdate(doc.trial_end_date) if doc.trial_end_date else None):
             doc.trial_end_date = trial_end
             changed = True
         if end != getdate(doc.end_date):
