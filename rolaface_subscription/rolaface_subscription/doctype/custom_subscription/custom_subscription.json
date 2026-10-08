@@ -13,7 +13,6 @@
   "column_break_main",
   "plan",
   "plan_name",
-  "plan_code",
   "status",
   "section_plan",
   "pricing_model",
@@ -105,12 +104,6 @@
    "fieldname": "plan_name",
    "fieldtype": "Data",
    "label": "Plan Name",
-   "read_only": 1
-  },
-  {
-   "fieldname": "plan_code",
-   "fieldtype": "Data",
-   "label": "Plan Code",
    "read_only": 1
   },
   {
@@ -366,7 +359,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-08 21:11:15.088102",
+ "modified": "2026-10-09 00:54:54.057048",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Subscription",

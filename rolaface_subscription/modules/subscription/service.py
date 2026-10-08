@@ -37,7 +37,6 @@ from rolaface_subscription.modules.subscription.constant import (
     SUB_MODULE_DOCTYPE,
     SUB_MODULES_FIELD,
     SUBSCRIPTION_DOCTYPE,
-    SUBSCRIPTION_SERIES,
 )
 from rolaface_subscription.modules.subscription.utils import (
     CENT,
@@ -131,12 +130,10 @@ class SubscriptionService:
         doc = frappe.get_doc(
             {
                 "doctype": SUBSCRIPTION_DOCTYPE,
-                "naming_series": SUBSCRIPTION_SERIES,
                 "customer": customer.name,
                 "customer_name": customer.customer_name,
                 "plan": plan.name,
                 "plan_name": plan.plan_name,
-                "plan_code": plan.plan_code,
                 "pricing_model": plan.pricing_model,
                 "plan_billing_frequency": plan.billing_frequency,
                 "billing_frequency": frequency,
@@ -464,7 +461,6 @@ class SubscriptionService:
         return {
             "plan": plan.name,
             "plan_name": plan.plan_name,
-            "plan_code": plan.plan_code,
             "pricing_model": plan.pricing_model,
             "plan_billing_frequency": plan.billing_frequency,
             "billing_frequency": plan.billing_frequency,  # reset to the new plan's frequency
@@ -672,7 +668,7 @@ class SubscriptionService:
             PLAN_DOCTYPE,
             filters={"status": PLAN_ACTIVE_STATUS},
             fields=[
-                "name", "plan_name", "plan_code", "description", "pricing_model", "billing_frequency", "currency",
+                "name", "plan_name", "description", "pricing_model", "billing_frequency", "currency",
                 "base_price", "setup_fee", "trial_enabled", "trial_days", "renewal_mode", "billing_cycles",
                 "user_limit",
             ],
@@ -728,7 +724,6 @@ class SubscriptionService:
                 {
                     "name": plan.name,
                     "plan_name": plan.plan_name,
-                    "plan_code": plan.plan_code,
                     "description": plan.description,
                     "pricing_model": plan.pricing_model,
                     "billing_frequency": plan.billing_frequency,

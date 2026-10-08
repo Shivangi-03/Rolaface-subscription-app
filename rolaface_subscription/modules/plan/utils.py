@@ -1,5 +1,4 @@
 import json
-import re
 from decimal import Decimal, InvalidOperation
 
 import frappe
@@ -19,7 +18,6 @@ from rolaface_subscription.modules.plan.constant import (
     MAX_NAME_LENGTH,
     MAX_PAGE,
     MAX_PAGE_SIZE,
-    MAX_PLAN_CODE_LENGTH,
     MAX_PRICE,
     MAX_TRIAL_DAYS,
     MAX_USER_LIMIT,
@@ -39,7 +37,6 @@ from rolaface_subscription.utils.api_response import ConflictError
 
 _TRUE_VALUES = {"true", "1", "yes", "y", "on", "t"}
 _FALSE_VALUES = {"false", "0", "no", "n", "off", "f"}
-_PLAN_CODE_RE = re.compile(r"^[A-Z0-9_-]+$")
 _MONEY_QUANT = Decimal(1).scaleb(-PRICE_DECIMAL_PLACES)  # Decimal("0.01")
 
 
@@ -135,17 +132,6 @@ def normalize_plan_name(value, field="plan_name"):
     return " ".join(value.split())
 
 
-def _plan_code(value):
-    if value is None:
-        return None
-    value = _clean_str(value, "plan_code", max_len=MAX_PLAN_CODE_LENGTH).upper()
-    if not value:
-        return None
-    if not _PLAN_CODE_RE.match(value):
-        frappe.throw("plan_code may contain only letters, numbers, '-' and '_'")
-    return value
-
-
 def _parse_modules(value):
     if isinstance(value, str):
         try:
@@ -196,7 +182,6 @@ def _opt_int(params, key, default, minimum, maximum):
 
 _FIELD_RULES = {
     "plan_name": normalize_plan_name,
-    "plan_code": _plan_code,
     "user_limit": lambda v: _to_int(v, "user_limit", 0, MAX_USER_LIMIT),  
     "description": lambda v: None if v is None else _clean_str(v, "description", 0, MAX_DESCRIPTION_LENGTH),
     "modules": _parse_modules,
@@ -213,9 +198,8 @@ _FIELD_RULES = {
 
 # `status` is deliberately NOT accepted on create: create always makes a Draft.
 _CREATE_REQUIRED = {"plan_name", "currency", "modules", "pricing_model", "billing_frequency"}
-_NULLABLE = {"plan_code", "description"}
+_NULLABLE = {"description"}
 _CREATE_DEFAULTS = {
-    "plan_code": None,
     "user_limit": 0,  
     "description": None,
     "base_price": None,  
@@ -288,9 +272,6 @@ def validate_update_payload(payload: dict) -> dict:
         if value is None and field != "description":
             frappe.throw(f"{field} cannot be null")
         result[field] = rule(value)
-
-    if "plan_code" in result and result["plan_code"] is None:
-        frappe.throw("plan_code cannot be blank")
     return result
 
 

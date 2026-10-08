@@ -3,7 +3,6 @@ SUB_MODULE_DOCTYPE = "Custom Subscription Module"
 CUSTOMER_DOCTYPE = "Customer" 
 
 SUB_MODULES_FIELD = "modules" 
-SUBSCRIPTION_SERIES = "SUB-.YYYY.-.####"
 
 
 STATUS_DRAFT = "Draft"
@@ -62,7 +61,6 @@ LIST_COLUMNS = [
 ]
 
 DETAIL_FIELDS = LIST_COLUMNS + [
-    "plan_code",
     "pricing_model",
     "plan_billing_frequency",
     "custom_interval_months",

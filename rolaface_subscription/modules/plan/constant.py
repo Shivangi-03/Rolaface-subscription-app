@@ -12,7 +12,6 @@ CHILD_ROW_NAME_FIELD = {"name"}
 
 ALLOWED_PLAN_FIELDS = {
     "plan_name",
-    "plan_code",
     "user_limit",
     "status",
     "products",
@@ -59,7 +58,6 @@ ALLOWED_SORT_FIELDS = {
     "creation",
     "modified",
     "plan_name",
-    "plan_code",
     "status",
     "billing_frequency",
     "base_price",
@@ -68,7 +66,6 @@ ALLOWED_SORT_FIELDS = {
 RETURN_FIELDS_GET_ALL = [
     "name",
     "plan_name",
-    "plan_code",
     "status",
     "products",
     "pricing_model",
@@ -102,9 +99,7 @@ MAX_MODULES_PER_PLAN = 200
 
 MAX_VARCHAR = 140  
 MAX_NAME_LENGTH = 140
-MAX_PLAN_CODE_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 5000
-MAX_AUTO_CODE_TRIES = 100
 
 
 PRICE_DECIMAL_PLACES = 2

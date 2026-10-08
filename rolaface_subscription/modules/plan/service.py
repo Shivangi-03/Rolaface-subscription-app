@@ -1,16 +1,13 @@
 import hashlib
 import math
-import re
 from contextlib import contextmanager, nullcontext
 from decimal import Decimal
 
 import frappe
-from frappe.utils import cint, getdate
+from frappe.utils import cint
 
 from rolaface_subscription.modules.plan.constant import (
     CURRENCY_DOCTYPE,
-    MAX_AUTO_CODE_TRIES,
-    MAX_PLAN_CODE_LENGTH,
     MAX_PRICE,
     MAX_VARCHAR,
     MODULE_DOCTYPE,
@@ -40,14 +37,6 @@ from rolaface_subscription.modules.plan.utils import (
     to_db_value,
 )
 from rolaface_subscription.utils.api_response import ConflictError
-
-_CODE_CLEAN_RE = re.compile(r"[^A-Z0-9_-]+")
-_SAVEPOINT = "plan_code_try"
-
-
-def _sanitize_code(text: str) -> str:
-    return _CODE_CLEAN_RE.sub("-", (text or "").upper()).strip("-")
-
 
 class PlanService:
     @staticmethod
@@ -93,12 +82,11 @@ class PlanService:
             "billing_cycles": data["billing_cycles"] if data["renewal_mode"] == RENEWAL_FIXED else 0,
             PLAN_MODULES_FIELD: module_rows,
         }
-        doc = PlanService._insert_plan(values, data.get("plan_code"), product_codes)
+        doc = PlanService._insert_doc(values)
 
         return {
             "name": doc.name,
             "plan_name": doc.plan_name,
-            "plan_code": doc.plan_code,
             "products": product_codes,
             "status": doc.status,
             "pricing_model": doc.pricing_model,
@@ -108,40 +96,10 @@ class PlanService:
         }
 
     @staticmethod
-    def _insert_plan(values: dict, plan_code: str | None, product_codes: list[str]):
-        if plan_code:
-            if PlanService._plan_code_exists(plan_code):
-                frappe.throw(f"Plan code '{plan_code}' already exists", ConflictError)
-            try:
-                return PlanService._insert_doc({**values, "plan_code": plan_code})
-            except frappe.DuplicateEntryError:
-                frappe.throw(f"Plan code '{plan_code}' already exists", ConflictError)
-
-        for candidate in PlanService._auto_code_candidates(product_codes):
-            if PlanService._plan_code_exists(candidate):
-                continue
-            frappe.db.savepoint(_SAVEPOINT)
-            try:
-                return PlanService._insert_doc({**values, "plan_code": candidate})
-            except frappe.DuplicateEntryError:
-                frappe.db.rollback(save_point=_SAVEPOINT)  # lost a race, try the next one
-        frappe.throw("Could not generate a unique plan code, please enter one", ConflictError)
-
-    @staticmethod
     def _insert_doc(values: dict):
         doc = frappe.get_doc(values)
         doc.insert(ignore_permissions=True)
         return doc
-
-    @staticmethod
-    def _auto_code_candidates(product_codes: list[str]):
-        year = str(getdate().year)
-        room = MAX_PLAN_CODE_LENGTH - len(year) - 1 - len(str(MAX_AUTO_CODE_TRIES + 1)) - 1
-        stem = (_sanitize_code("-".join(product_codes)) or "PLAN")[:room].rstrip("-") or "PLAN"
-        base = f"{stem}-{year}"
-        yield base
-        for i in range(2, MAX_AUTO_CODE_TRIES + 2):
-            yield f"{base}-{i}"
 
     @staticmethod
     def _resolve_modules(requested: list[dict]) -> list[dict]:
@@ -259,13 +217,6 @@ class PlanService:
             frappe.db.sql("SELECT RELEASE_LOCK(%s)", (key,))
 
     @staticmethod
-    def _plan_code_exists(plan_code: str) -> bool:
-        return bool(
-            frappe.db.exists(PLAN_DOCTYPE, plan_code)
-            or frappe.db.exists(PLAN_DOCTYPE, {"plan_code": plan_code})
-        )
-
-    @staticmethod
     def _plan_name_exists(plan_name: str, exclude: str | None = None) -> bool:
         filters = {"plan_name": plan_name}
         if exclude:
@@ -292,7 +243,7 @@ class PlanService:
         or_filters = None
         if params.get("search"):
             pattern = f"%{params['search']}%"
-            or_filters = [["plan_name", "like", pattern], ["plan_code", "like", pattern]]
+            or_filters = [["plan_name", "like", pattern], ["name", "like", pattern]]
 
         order_by = f"{params['sort_by']} {params['sort_order']}"  # sort_by is whitelisted
         if params["sort_by"] != "name":
@@ -393,12 +344,6 @@ class PlanService:
                 f"Only {PLAN_EDITABLE_STATUS} plans can be edited, this plan is '{doc.status}'",
                 ConflictError,
             )
-
-        if "plan_code" in params:
-            if params.pop("plan_code").upper() != (doc.plan_code or "").upper():
-                frappe.throw("plan_code cannot be changed after creation")
-            if not params:
-                frappe.throw("Nothing to update, send at least one field")
 
         assert_not_stale(doc, expected_modified)
 

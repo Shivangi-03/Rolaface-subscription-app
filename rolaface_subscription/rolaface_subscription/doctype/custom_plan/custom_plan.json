@@ -1,15 +1,15 @@
 {
  "actions": [],
  "allow_rename": 1,
- "autoname": "field:plan_code",
+ "autoname": "naming_series:",
  "creation": "2026-09-29 15:07:33.024285",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "tab_basic",
   "plan_name",
-  "plan_code",
   "user_limit",
+  "naming_series",
   "column_break_yxmd",
   "status",
   "products",
@@ -44,13 +44,6 @@
    "in_list_view": 1,
    "label": "Plan Name",
    "reqd": 1
-  },
-  {
-   "fieldname": "plan_code",
-   "fieldtype": "Data",
-   "label": "Plan Code",
-   "set_only_once": 1,
-   "unique": 1
   },
   {
    "description": "0 = unlimited",
@@ -185,16 +178,27 @@
    "fieldtype": "Table",
    "label": "Modules",
    "options": "Custom Plan Module"
+  },
+  {
+   "bold": 1,
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Series",
+   "no_copy": 1,
+   "options": "PLAN-.#####",
+   "print_hide": 1,
+   "reqd": 1,
+   "set_only_once": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-10-06 10:17:02.888055",
+ "modified": "2026-10-09 00:53:59.575397",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Plan",
- "naming_rule": "By fieldname",
+ "naming_rule": "By \"Naming Series\" field",
  "owner": "Administrator",
  "permissions": [
   {
