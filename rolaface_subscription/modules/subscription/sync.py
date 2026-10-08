@@ -1,6 +1,7 @@
 import json
 import frappe
 import requests
+from frappe.utils import cint
 
 from rolaface_subscription.modules.subscription.constant import (
     CUSTOMER_BACKEND_URL_FIELD,
@@ -54,8 +55,12 @@ def _remote_succeeded(res) -> bool:
 
 def build_sync_payload(doc) -> dict:
     return {
-        "masterSubscriptionName": doc.name,
-        "subscriptionStatus": doc.status,
+        "master_subscription_name": doc.name,
+        "subscription_status": doc.status,
+        "start_date": str(doc.start_date) if doc.start_date else None,
+        "end_date": str(doc.end_date) if doc.end_date else None,
+        "trial_enabled": bool(cint(doc.trial_enabled)),
+        "trial_end_date": str(doc.trial_end_date) if cint(doc.trial_enabled) and doc.trial_end_date else None,
         # the whole subscription (with module rows) is stored in the customer's JSON field
         "details": json.loads(frappe.as_json(doc.as_dict(convert_dates_to_str=True))),
     }
@@ -86,7 +91,7 @@ def delete_subscription_from_customer(conn: dict, name: str) -> bool:
     try:
         res = requests.delete(
             conn["base_url"] + CUSTOMER_SYNC_DELETE_PATH,
-            data=frappe.as_json({"masterSubscriptionName": name}),
+            data=frappe.as_json({"master_subscription_name": name}),
             headers=conn["headers"],
         )
         if _remote_succeeded(res) or res.status_code == 404:

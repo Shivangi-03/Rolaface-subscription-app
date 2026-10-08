@@ -242,12 +242,12 @@
    "set_only_once": 1
   },
   {
-   "description": "Same as start date when there is no trial",
+   "depends_on": "eval:doc.trial_enabled",
    "fieldname": "trial_end_date",
    "fieldtype": "Date",
    "label": "Trial End Date",
-   "read_only": 1,
-   "reqd": 1
+   "mandatory_depends_on": "eval:doc.trial_enabled",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_dates",
@@ -367,7 +367,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-08 13:23:06.301227",
+ "modified": "2026-10-08 20:33:39.123101",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Subscription",
