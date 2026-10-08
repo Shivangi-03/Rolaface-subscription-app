@@ -76,6 +76,9 @@ DETAIL_FIELDS = LIST_COLUMNS + [
     "notes",
     "auto_sync",
 ]
+UPDATABLE_FIELDS = ("plan", "start_date", "end_date", "discount_amount", "notes", "auto_sync")
+UPDATE_CONTROL_KEYS = ("id", "modified", "cmd")
+UPDATE_REJECT_UNKNOWN = True  
 
 MODULE_ROW_FIELDS = ["name", "module", "module_name", "product", "price", "is_enabled"]
 

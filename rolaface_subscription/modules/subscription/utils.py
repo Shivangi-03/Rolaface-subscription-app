@@ -41,6 +41,9 @@ from rolaface_subscription.modules.subscription.constant import (
     STATUS_TRIALING,
     SUBSCRIPTION_DOCTYPE,
     SUBSCRIPTION_FREQUENCIES,
+    UPDATABLE_FIELDS,               
+    UPDATE_CONTROL_KEYS,               
+    UPDATE_REJECT_UNKNOWN,    
 )
 from rolaface_subscription.utils.api_response import ConflictError
 
@@ -184,12 +187,30 @@ def validate_update_payload(payload: dict) -> dict:
     payload = payload or {}
     if _blank_to_none(payload.get("id")) is None:
         frappe.throw("id is required")
+
+    if UPDATE_REJECT_UNKNOWN:
+        unknown = sorted(set(payload) - set(UPDATABLE_FIELDS) - set(UPDATE_CONTROL_KEYS))
+        if unknown:
+            frappe.throw(
+                f"These fields cannot be updated: {', '.join(unknown)}. "
+                f"Allowed: {', '.join(UPDATABLE_FIELDS)}"
+            )
+
     result = {"id": _clean_str(payload["id"], "id", 1, MAX_NAME_LENGTH)}
 
     modified = _blank_to_none(payload.get("modified"))
     if modified is not None:
         result["modified"] = _clean_str(modified, "modified")
 
+    if "plan" in payload:
+        if _blank_to_none(payload["plan"]) is None:
+            frappe.throw("plan cannot be blank")
+        result["plan"] = _clean_str(payload["plan"], "plan", 1, MAX_NAME_LENGTH)
+    for field in ("start_date", "end_date"):
+        if field in payload:
+            if _blank_to_none(payload[field]) is None:
+                frappe.throw(f"{field} cannot be blank")
+            result[field] = _to_date(payload[field], field)
     if "discount_amount" in payload:
         if payload["discount_amount"] is None:
             frappe.throw("discount_amount cannot be null")
@@ -201,10 +222,10 @@ def validate_update_payload(payload: dict) -> dict:
         if payload["auto_sync"] is None:
             frappe.throw("auto_sync cannot be null")
         result["auto_sync"] = _to_bool(payload["auto_sync"], "auto_sync")
-    if not any(k in result for k in ("discount_amount", "notes", "auto_sync")):
-        frappe.throw("Nothing to update, send discount_amount, notes or auto_sync")
-    return result
 
+    if not any(k in result for k in UPDATABLE_FIELDS):
+        frappe.throw(f"Nothing to update, send at least one of: {', '.join(UPDATABLE_FIELDS)}")
+    return result
 
 def validate_submit_payload(payload: dict) -> dict:
     payload = payload or {}

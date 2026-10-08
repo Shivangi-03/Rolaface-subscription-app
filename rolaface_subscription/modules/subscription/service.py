@@ -1,4 +1,5 @@
 import math
+from contextlib import ExitStack         
 from decimal import ROUND_HALF_UP, Decimal
 import frappe
 from frappe.utils import add_days, cint, getdate
@@ -27,6 +28,7 @@ from rolaface_subscription.modules.subscription.constant import (
     MAX_FUTURE_START_DAYS,
     MODULE_ROW_FIELDS,
     MSG_NOT_FOUND,
+    MSG_STALE,
     OPEN_STATUSES,
     STATUS_ACTIVE,
     STATUS_DRAFT,
@@ -72,6 +74,8 @@ class SubscriptionService:
         # same lock as create, so a second subscription for this customer + plan cannot sneak in
         with named_lock(f"create|{row.customer}|{row.plan}"):
             doc = get_locked_subscription(params["id"])
+            if doc.customer != row.customer or doc.plan != row.plan: 
+                frappe.throw(MSG_STALE, ConflictError)       
             if doc.docstatus != 0 or doc.status != STATUS_DRAFT:
                 frappe.throw(f"Only Draft subscriptions can be submitted, this one is {doc.status}", ConflictError)
             assert_not_stale(doc, params.get("modified"))
@@ -338,36 +342,153 @@ class SubscriptionService:
         sub_id = params.pop("id")
         expected_modified = params.pop("modified", None)
 
+        row = frappe.db.get_value(SUBSCRIPTION_DOCTYPE, sub_id, ["customer", "plan"], as_dict=True)
+        if not row:
+            frappe.throw(MSG_NOT_FOUND.format(sub_id=sub_id), frappe.DoesNotExistError)
+
+        lock_keys = {f"create|{row.customer}|{row.plan}"}
+        if params.get("plan"):
+            lock_keys.add(f"create|{row.customer}|{params['plan']}")
+
+        with ExitStack() as stack:
+            for key in sorted(lock_keys):
+                stack.enter_context(named_lock(key))
+            doc = SubscriptionService._update_draft(sub_id, row, params, expected_modified)
+        return SubscriptionService._detail(doc)
+
+    @staticmethod
+    def _update_draft(sub_id: str, row, params: dict, expected_modified):
         doc = get_locked_subscription(sub_id)
-        if doc.status not in OPEN_STATUSES:
-            frappe.throw(f"A {doc.status} subscription cannot be edited", ConflictError)
+        if doc.docstatus != 0 or doc.status != STATUS_DRAFT:
+            frappe.throw(f"Only Draft subscriptions can be edited, this one is {doc.status}", ConflictError)
+        if doc.customer != row.customer or doc.plan != row.plan:
+            frappe.throw(MSG_STALE, ConflictError)  # changed between our pre-read and the row lock
         assert_not_stale(doc, expected_modified)
 
+        today = getdate()
         changed = False
-        if "discount_amount" in params:
-            if doc.docstatus != 0:
-                frappe.throw("discount_amount can only be changed while the subscription is a Draft", ConflictError)
-            discount = params["discount_amount"]
-            if discount > money(doc.subtotal):
+
+        plan = None
+        plan_changed = False
+        if "plan" in params and params["plan"] != doc.plan:
+            plan = SubscriptionService._get_plan(params["plan"])  # must exist and be Active
+            plan_changed = plan.name != doc.plan
+
+        start, end = getdate(doc.start_date), getdate(doc.end_date)
+        start_changed = "start_date" in params and params["start_date"] != start
+        end_changed = "end_date" in params and params["end_date"] != end
+        if start_changed:
+            start = params["start_date"]
+        if end_changed:
+            end = params["end_date"]
+
+        if plan_changed:
+            if frappe.db.exists(
+                SUBSCRIPTION_DOCTYPE,
+                {
+                    "customer": doc.customer,
+                    "plan": plan.name,
+                    "status": ["in", OPEN_STATUSES],
+                    "name": ["!=", doc.name],
+                },
+            ):
+                frappe.throw("This customer already has a draft or live subscription for this plan", ConflictError)
+            modules = SubscriptionService._resolve_plan_modules(plan)
+            trial_days = cint(plan.trial_days) if cint(plan.trial_enabled) else 0
+        else:
+            modules = None
+            trial_days = cint(doc.trial_days)  # keep the snapshot, do not re-read the plan
+        trial_end = add_days(start, trial_days)
+
+        # date rules only when something date-related really changed
+        if plan_changed or start_changed or end_changed:
+            if start_changed:
+                if start < add_days(today, -MAX_BACKDATE_DAYS):
+                    frappe.throw(f"start_date cannot be more than {MAX_BACKDATE_DAYS} days in the past")
+                if start > add_days(today, MAX_FUTURE_START_DAYS):
+                    frappe.throw(f"start_date cannot be more than {MAX_FUTURE_START_DAYS} days in the future")
+            if end <= trial_end:
+                frappe.throw(f"end_date must be after the start date and the trial end date ({trial_end})")
+            if end <= today:
+                frappe.throw("end_date must be in the future")
+
+        discount = params.get("discount_amount", money(doc.discount_amount))
+        if plan_changed:
+            plan_months = FREQUENCY_MONTHS.get(plan.billing_frequency)
+            if not plan_months:
+                frappe.throw(f"Plan has an unsupported billing frequency '{plan.billing_frequency}'")
+            subtotal, discount, grand_total = SubscriptionService._compute_pricing(
+                money(plan.base_price), plan_months, plan_months, discount
+            )
+            for field, value in SubscriptionService._plan_snapshot(plan, plan_months, trial_days).items():
+                doc.set(field, value)
+            doc.set(SUB_MODULES_FIELD, SubscriptionService._module_rows(modules))
+            changed = True
+        else:
+            subtotal = money(doc.subtotal)
+            if discount > subtotal:
                 frappe.throw("discount_amount cannot be more than the price per billing period")
-            if discount != money(doc.discount_amount):
-                doc.discount_amount = float(discount)
-                doc.grand_total = float(money(doc.subtotal) - discount)
-                changed = True
-        if "auto_sync" in params:
-            if doc.docstatus != 0:
-                frappe.throw("auto_sync can only be changed while the subscription is a Draft", ConflictError)
-            if cint(params["auto_sync"]) != cint(doc.auto_sync):
-                doc.auto_sync = cint(params["auto_sync"])
-                changed = True
-        for field in ("notes",):
-            if field in params and (params[field] or None) != (doc.get(field) or None):
-                doc.set(field, params[field])
-                changed = True
+            grand_total = subtotal - discount
+
+        if subtotal != money(doc.subtotal) or discount != money(doc.discount_amount):
+            doc.subtotal = float(subtotal)
+            doc.discount_amount = float(discount)
+            doc.grand_total = float(grand_total)
+            changed = True
+        if start != getdate(doc.start_date):
+            doc.start_date = start
+            changed = True
+        if trial_end != getdate(doc.trial_end_date):
+            doc.trial_end_date = trial_end
+            changed = True
+        if end != getdate(doc.end_date):
+            doc.end_date = end
+            changed = True
+        if "auto_sync" in params and cint(params["auto_sync"]) != cint(doc.auto_sync):
+            doc.auto_sync = cint(params["auto_sync"])
+            changed = True
+        if "notes" in params and (params["notes"] or None) != (doc.get("notes") or None):
+            doc.notes = params["notes"]
+            changed = True
 
         if changed:
-            save_doc(doc)  # Frappe's own version history (Track Changes) records who changed what
-        return SubscriptionService._detail(doc)
+            save_doc(doc)  # Frappe's version history records who changed what
+        return doc
+
+    @staticmethod
+    def _plan_snapshot(plan, plan_months: int, trial_days: int) -> dict:
+        return {
+            "plan": plan.name,
+            "plan_name": plan.plan_name,
+            "plan_code": plan.plan_code,
+            "pricing_model": plan.pricing_model,
+            "plan_billing_frequency": plan.billing_frequency,
+            "billing_frequency": plan.billing_frequency,  # reset to the new plan's frequency
+            "custom_interval_months": 0,
+            "period_months": plan_months,
+            "currency": plan.currency,
+            "plan_price": float(money(plan.base_price)),
+            "setup_fee": float(money(plan.setup_fee)),
+            "trial_enabled": 1 if trial_days else 0,
+            "trial_days": trial_days,
+            "renewal_mode": plan.renewal_mode,
+            "billing_cycles": cint(plan.billing_cycles),
+            "user_limit": cint(plan.user_limit),
+            "products": plan.products,
+        }
+
+    @staticmethod
+    def _module_rows(modules: list[dict]) -> list[dict]:
+        return [
+            {
+                "module": m["module"],
+                "module_name": m["module_name"],
+                "product": m["product"],
+                "price": float(money(m["price"])),
+                "is_enabled": 1,
+            }
+            for m in modules
+        ]
 
     @staticmethod
     def cancel_subscription(params: dict) -> dict:
