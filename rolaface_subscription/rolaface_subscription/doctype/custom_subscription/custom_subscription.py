@@ -54,5 +54,11 @@ class CustomSubscription(Document):
     def before_cancel(self):
         doc_events.before_cancel(self)
 
+    def on_update_after_submit(self):
+        doc_events.on_update_after_submit(self)
+
+    def on_cancel(self):
+        doc_events.on_cancel(self)
+
     # def on_trash(self):
     #     frappe.throw(_("Subscriptions cannot be deleted. Cancel the subscription instead."))

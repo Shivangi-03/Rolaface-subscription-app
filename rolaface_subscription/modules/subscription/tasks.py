@@ -3,42 +3,50 @@ from frappe.utils import getdate
 from rolaface_subscription.modules.subscription.constant import (
     LIVE_STATUSES,
     STATUS_CANCELLED,
-    STATUS_DRAFT,
     SUBSCRIPTION_DOCTYPE,
 )
 from rolaface_subscription.modules.subscription.utils import derive_status
 
 def refresh_subscription_statuses() -> int:
-    """Daily: move stored statuses along their dates (Scheduled -> Trialing -> Active -> Expired, and
-    Cancelled once a scheduled cancel date is reached). Rows without a status are filled in too;
-    unsubmitted subscriptions are always Draft.
+    """Daily: move submitted subscriptions along their dates (Scheduled -> Trialing -> Active -> Expired,
+    and Cancelled once a scheduled cancel date is reached). Drafts are never touched.
     Returns how many subscriptions changed."""
     today = getdate()
     rows = frappe.get_all(
         SUBSCRIPTION_DOCTYPE,
-        or_filters=[["status", "in", LIVE_STATUSES], ["status", "is", "not set"]],
-        fields=["name", "docstatus", "status", "start_date", "trial_end_date", "end_date", "cancelled_on"],
+        filters={"docstatus": 1, "status": ["in", LIVE_STATUSES]},
+        fields=["name", "status", "start_date", "trial_end_date", "end_date", "cancelled_on"],
         limit_page_length=0,
     )
 
     changed = 0
     for row in rows:
-        new_status = derive_status(row, today) if row.docstatus == 1 else STATUS_DRAFT
+        new_status = derive_status(row, today)
         if new_status == row.status:
             continue
         if new_status == STATUS_CANCELLED:
             changed += _cancel(row)
-            continue
-        # only if nobody changed the status in the meantime (e.g. an immediate cancel)
-        frappe.db.set_value(
-            SUBSCRIPTION_DOCTYPE,
-            {"name": row.name, "status": row.status or ["is", "not set"]},
-            "status",
-            new_status,
-        )
-        changed += 1
-    frappe.db.commit()
+        else:
+            changed += _set_submitted_status(row, new_status)
     return changed
+
+
+def _set_submitted_status(row, new_status) -> int:
+    """Save the new status the normal way, so it is synced to the customer site (on_update_after_submit).
+    If that fails, the change is rolled back and retried on the next run."""
+    try:
+        doc = frappe.get_doc(SUBSCRIPTION_DOCTYPE, row.name, for_update=True)
+        if doc.docstatus != 1 or doc.status != row.status:
+            return 0
+        doc.status = new_status
+        doc.flags.ignore_permissions = True
+        doc.save()
+        frappe.db.commit()
+        return 1
+    except Exception:
+        frappe.db.rollback()
+        frappe.log_error(title=f"Status update failed for subscription {row.name}")
+        return 0
 
 
 def _cancel(row) -> int:

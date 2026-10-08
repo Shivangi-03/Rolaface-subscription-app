@@ -8,11 +8,12 @@ from rolaface_subscription.modules.subscription.constant import (
     CUSTOMER_DOCTYPE,
     CUSTOMER_SYNC_CREATE_PATH,
     CUSTOMER_SYNC_DELETE_PATH,
+    CUSTOMER_SYNC_UPDATE_PATH,
 )
 from rolaface_subscription.utils.api_response import CustomerSyncError
 
 
-def _get_connection(customer: str) -> dict:
+def get_connection(customer: str) -> dict:
     url = frappe.db.get_value(CUSTOMER_DOCTYPE, customer, CUSTOMER_BACKEND_URL_FIELD)
     if not url or not url.strip():
         frappe.throw(f"Customer '{customer}' has no backend URL, cannot sync the subscription", CustomerSyncError)
@@ -67,7 +68,7 @@ def build_sync_payload(doc) -> dict:
 
 
 def sync_subscription_to_customer(doc) -> dict:
-    conn = _get_connection(doc.customer)
+    conn = get_connection(doc.customer)
     payload = build_sync_payload(doc)
     try:
         res = requests.post(
@@ -86,6 +87,47 @@ def sync_subscription_to_customer(doc) -> dict:
         frappe.throw(f"Customer site rejected the subscription sync: {_remote_message(res)}", CustomerSyncError)
 
     return conn
+
+def update_subscription_on_customer(doc, conn: dict | None = None) -> dict:
+    """Push the current state of a submitted subscription to the customer site.
+    Raises CustomerSyncError on failure."""
+    conn = conn or get_connection(doc.customer)
+    try:
+        res = requests.put(
+            conn["base_url"] + CUSTOMER_SYNC_UPDATE_PATH,
+            data=frappe.as_json(build_sync_payload(doc)),
+            headers=conn["headers"],
+        )
+    except requests.RequestException as e:
+        frappe.throw(f"Could not reach the customer site to sync the subscription: {type(e).__name__}",
+                     CustomerSyncError)
+
+    if not _remote_succeeded(res):
+        frappe.throw(f"Customer site rejected the subscription update: {_remote_message(res)}", CustomerSyncError)
+    return conn
+
+
+def restore_subscription_on_customer(conn: dict, payload: dict) -> bool:
+    """Best-effort undo of an update: send the previous state back. Never raises; failures are logged."""
+    try:
+        res = requests.put(
+            conn["base_url"] + CUSTOMER_SYNC_UPDATE_PATH,
+            data=frappe.as_json(payload),
+            headers=conn["headers"],
+        )
+        if _remote_succeeded(res):
+            return True
+        reason = _remote_message(res)
+    except requests.RequestException as e:
+        reason = f"{type(e).__name__}: {e}"
+
+    frappe.log_error(
+        title="Customer subscription update rollback failed",
+        message=f"Subscription '{payload['master_subscription_name']}' on {conn['base_url']} may not match "
+        f"the master any more, re-sync it manually.\n{reason}",
+    )
+    return False
+
 
 def delete_subscription_from_customer(conn: dict, name: str) -> bool:
     try:

@@ -88,3 +88,4 @@ CUSTOMER_BACKEND_URL_FIELD = "website"
 
 CUSTOMER_SYNC_CREATE_PATH = "/api/method/auth_api.module.subscription.api.create"
 CUSTOMER_SYNC_DELETE_PATH = "/api/method/auth_api.module.subscription.api.delete"
+CUSTOMER_SYNC_UPDATE_PATH = "/api/method/auth_api.module.subscription.api.update"
