@@ -99,8 +99,7 @@
    "label": "Plan",
    "options": "Custom Plan",
    "reqd": 1,
-   "search_index": 1,
-   "set_only_once": 1
+   "search_index": 1
   },
   {
    "fieldname": "plan_name",
@@ -255,7 +254,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Subscription expiry date (sent by the frontend)",
+   "description": "Only for Fixed Cycles plans",
    "fieldname": "end_date",
    "fieldtype": "Date",
    "label": "End Date",
@@ -368,7 +367,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2026-10-08 03:29:30.870429",
+ "modified": "2026-10-08 13:23:06.301227",
  "modified_by": "Administrator",
  "module": "Rolaface Subscription",
  "name": "Custom Subscription",
