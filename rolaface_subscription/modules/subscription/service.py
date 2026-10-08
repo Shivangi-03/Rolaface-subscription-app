@@ -496,29 +496,48 @@ class SubscriptionService:
 
     @staticmethod
     def cancel_subscription(params: dict) -> dict:
-        doc = get_locked_subscription(params["id"])
+        doc = get_locked_subscription(params["id"])  
         today = getdate()
-        state = build_state(doc, today)
+
         if doc.status == STATUS_DRAFT:
             frappe.throw("A Draft subscription cannot be cancelled, it was never submitted", ConflictError)
-        if doc.status not in LIVE_STATUSES:
+        if doc.docstatus != 1 or doc.status not in LIVE_STATUSES:
             frappe.throw(f"Subscription is already {doc.status}", ConflictError)
         assert_not_stale(doc, params.get("modified"))
 
-        immediate = params["immediate"] or doc.status in (STATUS_SCHEDULED, STATUS_TRIALING)
-        doc.cancel_reason = params["reason"]
-        if immediate:
+        if doc.end_date and getdate(doc.end_date) <= today:
+            frappe.throw(f"This subscription already ended on {doc.end_date}", ConflictError)
+
+        # 1. cancel now
+        if params["immediate"]:
+            doc.cancel_reason = params["reason"]
             doc.cancelled_on = today
             doc.flags.ignore_permissions = True
-            doc.cancel()  # Frappe cancel: docstatus 2, status set in doc_events.before_cancel
-        else:
-            if state["cancel_scheduled"]:
-                frappe.throw("Cancellation at period end is already scheduled", ConflictError)
-            if doc.end_date and getdate(state["current_period_end"]) >= getdate(doc.end_date):
-                frappe.throw(f"This subscription already ends on {doc.end_date}, no cancellation needed. "
-                "Use immediate cancel if you want to stop access now.", ConflictError,)
-            doc.cancelled_on = state["current_period_end"]  # the daily status job cancels it on that date
-            save_doc(doc)
+            doc.cancel()  # docstatus 2, status set in before_cancel
+            return SubscriptionService._detail(doc)
+
+        # 2. cancel at period end: only for Active subscriptions
+        if doc.status in (STATUS_SCHEDULED, STATUS_TRIALING):
+            frappe.throw(
+                f"A {doc.status} subscription can only be cancelled immediately",
+                ConflictError,
+            )
+
+        if doc.cancelled_on: 
+            frappe.throw(
+                f"Cancellation is already scheduled for {doc.cancelled_on}. "
+                "Use immediate cancel to stop it now.",
+                ConflictError,
+            )
+
+        state = build_state(doc, today)
+        cancel_date = getdate(state["current_period_end"])  
+        if cancel_date <= today:
+            frappe.throw("Nothing left to schedule, use immediate cancel", ConflictError)
+
+        doc.cancel_reason = params["reason"]
+        doc.cancelled_on = cancel_date  
+        save_doc(doc)
         return SubscriptionService._detail(doc)
 
     @staticmethod
