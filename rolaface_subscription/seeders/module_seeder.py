@@ -10,8 +10,6 @@ MODULES = {
 		"Inventory",
 		"Accounting",
 		"Assets",
-		"Human Resources",
-		"Expense Management",
 	],
 	"LMS": [
 		"Customer",
