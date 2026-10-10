@@ -1,0 +1,391 @@
+{
+ "actions": [],
+ "autoname": "naming_series:",
+ "creation": "2026-10-05 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_main",
+  "naming_series",
+  "customer",
+  "customer_name",
+  "auto_sync",
+  "column_break_main",
+  "plan",
+  "plan_name",
+  "status",
+  "section_plan",
+  "pricing_model",
+  "plan_billing_frequency",
+  "products",
+  "column_break_plan",
+  "currency",
+  "plan_price",
+  "setup_fee",
+  "user_limit",
+  "section_billing",
+  "billing_frequency",
+  "custom_interval_months",
+  "period_months",
+  "column_break_billing",
+  "trial_enabled",
+  "trial_days",
+  "renewal_mode",
+  "billing_cycles",
+  "section_dates",
+  "start_date",
+  "trial_end_date",
+  "column_break_dates",
+  "end_date",
+  "cancelled_on",
+  "cancel_reason",
+  "section_money",
+  "subtotal",
+  "discount_amount",
+  "column_break_money",
+  "grand_total",
+  "section_modules",
+  "modules",
+  "section_notes",
+  "notes",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_main",
+   "fieldtype": "Section Break",
+   "label": "Subscription"
+  },
+  {
+   "default": "SUB-.YYYY.-.####",
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "Subscription Number",
+   "no_copy": 1,
+   "options": "SUB-.YYYY.-.####",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1,
+   "search_index": 1,
+   "set_only_once": 1
+  },
+  {
+   "fetch_from": "customer.customer_name",
+   "fieldname": "customer_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Customer Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_main",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "plan",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Plan",
+   "options": "Custom Plan",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "fieldname": "plan_name",
+   "fieldtype": "Data",
+   "label": "Plan Name",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_plan",
+   "fieldtype": "Section Break",
+   "label": "Plan Details (copied from the plan when subscribed)"
+  },
+  {
+   "fieldname": "pricing_model",
+   "fieldtype": "Data",
+   "label": "Pricing Model",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_billing_frequency",
+   "fieldtype": "Data",
+   "label": "Plan Billing Frequency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "products",
+   "fieldtype": "Small Text",
+   "label": "Products",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_plan",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "currency",
+   "fieldtype": "Link",
+   "label": "Currency",
+   "options": "Currency",
+   "read_only": 1
+  },
+  {
+   "fieldname": "plan_price",
+   "fieldtype": "Currency",
+   "label": "Plan Price",
+   "options": "currency",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "setup_fee",
+   "fieldtype": "Currency",
+   "label": "Setup / Onboarding Fee",
+   "options": "currency",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "description": "0 = unlimited",
+   "fieldname": "user_limit",
+   "fieldtype": "Int",
+   "label": "User Limit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_billing",
+   "fieldtype": "Section Break",
+   "label": "Billing & Trial"
+  },
+  {
+   "fieldname": "billing_frequency",
+   "fieldtype": "Select",
+   "label": "Billing Frequency",
+   "options": "Monthly\nQuarterly\nHalf-Yearly\nYearly\nCustom",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval:doc.billing_frequency=='Custom'",
+   "fieldname": "custom_interval_months",
+   "fieldtype": "Int",
+   "label": "Custom Interval (months)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "period_months",
+   "fieldtype": "Int",
+   "label": "Billing Period (months)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_billing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "trial_enabled",
+   "fieldtype": "Check",
+   "label": "Free Trial",
+   "read_only": 1
+  },
+  {
+   "fieldname": "trial_days",
+   "fieldtype": "Int",
+   "label": "Trial Days",
+   "read_only": 1
+  },
+  {
+   "fieldname": "renewal_mode",
+   "fieldtype": "Select",
+   "label": "Renewal Mode",
+   "options": "Auto-renew\nFixed Cycles",
+   "read_only": 1
+  },
+  {
+   "fieldname": "billing_cycles",
+   "fieldtype": "Int",
+   "label": "Number of Cycles",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_dates",
+   "fieldtype": "Section Break",
+   "label": "Dates"
+  },
+  {
+   "fieldname": "start_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Start Date",
+   "reqd": 1,
+   "search_index": 1
+  },
+  {
+   "depends_on": "eval:doc.trial_enabled",
+   "fieldname": "trial_end_date",
+   "fieldtype": "Date",
+   "label": "Trial End Date",
+   "mandatory_depends_on": "eval:doc.trial_enabled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_dates",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Only for Fixed Cycles plans",
+   "fieldname": "end_date",
+   "fieldtype": "Date",
+   "label": "End Date",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "description": "Subscription is Cancelled from this date",
+   "fieldname": "cancelled_on",
+   "fieldtype": "Date",
+   "label": "Cancelled On",
+   "read_only": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "cancel_reason",
+   "fieldtype": "Small Text",
+   "label": "Cancel Reason",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_money",
+   "fieldtype": "Section Break",
+   "label": "Amount per billing period"
+  },
+  {
+   "fieldname": "subtotal",
+   "fieldtype": "Currency",
+   "label": "Subtotal",
+   "options": "currency",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "discount_amount",
+   "fieldtype": "Currency",
+   "label": "Discount Amount",
+   "non_negative": 1,
+   "options": "currency",
+   "precision": "2"
+  },
+  {
+   "fieldname": "column_break_money",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Subtotal minus discount. Tax is part of the plan price.",
+   "fieldname": "grand_total",
+   "fieldtype": "Currency",
+   "in_list_view": 1,
+   "label": "Total",
+   "options": "currency",
+   "precision": "2",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_modules",
+   "fieldtype": "Section Break",
+   "label": "Modules"
+  },
+  {
+   "fieldname": "modules",
+   "fieldtype": "Table",
+   "label": "Modules",
+   "options": "Custom Subscription Module",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_notes",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "allow_on_submit": 1,
+   "fieldname": "notes",
+   "fieldtype": "Text",
+   "label": "Subscription Notes / Commercial Terms"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Custom Subscription",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "allow_on_submit": 1,
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "no_copy": 1,
+   "options": "Draft\nScheduled\nTrialing\nActive\nExpired\nCancelled",
+   "read_only": 1,
+   "search_index": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "auto_sync",
+   "fieldtype": "Check",
+   "label": "Auto Sync"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-10-09 00:54:54.057048",
+ "modified_by": "Administrator",
+ "module": "Rolaface Subscription",
+ "name": "Custom Subscription",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "search_fields": "customer_name,plan_name",
+ "show_name_in_global_search": 1,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "customer_name",
+ "track_changes": 1
+}

@@ -4,3 +4,6 @@
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated
+rolaface_subscription.patches.v1.backfill_subscription_status
+rolaface_subscription.patches.v1.mark_unsubmitted_subscriptions_draft
+rolaface_subscription.patches.v1.clear_trial_end_without_trial

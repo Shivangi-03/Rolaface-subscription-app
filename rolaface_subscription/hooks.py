@@ -86,7 +86,8 @@ app_license = "apache-2.0"
 # ------------
 
 # before_install = "rolaface_subscription.install.before_install"
-# after_install = "rolaface_subscription.install.after_install"
+after_install = "rolaface_subscription.seeders.run_all_seeders"
+after_migrate = "rolaface_subscription.seeders.run_all_seeders"
 
 # Uninstallation
 # ------------
@@ -148,6 +149,12 @@ app_license = "apache-2.0"
 
 # Scheduled Tasks
 # ---------------
+
+scheduler_events = {
+	"daily": [
+		"rolaface_subscription.modules.subscription.tasks.refresh_subscription_statuses",
+	],
+}
 
 # scheduler_events = {
 # 	"all": [
